@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Distance</title>
+  <style>
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      background: #222;
+      color: #eee;
+      font-family: sans-serif;
+    }
+    input[type="file"] {
+      margin-bottom: 20px;
+    }
+    canvas {
+      border: 2px solid #555;
+      cursor: crosshair;
+      max-width: 90%;
+      height: auto;
+    }
+  </style>
+</head>
+<body>
+  <h2>Upload an Image and Click to Send Pixel Coordinates</h2>
+  <input type="file" id="fileInput" accept="image/*">
+  <canvas id="imgCanvas"></canvas>
+  <div id="textBox">No Pixels Selected</div>
+  <script>
+    const fileInput = document.getElementById("fileInput");
+    const canvas = document.getElementById("imgCanvas");
+    const ctx = canvas.getContext("2d");
+
+    fileInput.addEventListener("change", (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const img = new Image();
+      img.onload = () => {
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+      };
+      img.src = URL.createObjectURL(file);
+    });
+
+    function changeText(txt){
+    document.getElementById("textBox").textContent = txt;
+    }
+
+    let Point_Selected = 0
+    let x1, y1, x2, y2
+
+    canvas.addEventListener("click", (e) => {
+      if (!canvas.width || !canvas.height) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      const pixel = ctx.getImageData(x, y, 1, 1).data;
+      const [r, g, b, a] = pixel;
+      const color = `rgba(${r}, ${g}, ${b}, ${a / 255})`;
+      if(Point_Selected == 0){
+        
+        Point_Selected = 1;
+        x1 = x
+        y1 = y
+        changeText("Select one more point")
+      }
+      else{
+        Point_Selected = 0;
+        x2 = x
+        y2 = y
+      fetch("/pixel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ x1, y1, x2, y2, color })
+      })
+      .then(res => res.json())
+      .then(data => { document.getElementById("textBox").textContent = data.message;})
+      .then(data => console.log("Server response:", data))
+      
+       document.getElementById("myDiv").textContent = data.message;
+      }
+      
+      // Send data to backend
+
+    });
+  </script>
+</body>
+</html>
