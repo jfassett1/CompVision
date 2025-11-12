@@ -1,0 +1,48 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>HW3 Image Processing</title>
+  <style>
+    body { font-family: sans-serif; margin: 20px; background: #111; color: #eee; }
+    canvas, img { width: 300px; height: auto; margin: 5px; border: 1px solid #333; }
+    #preview-area { display: flex; flex-wrap: wrap; }
+  </style>
+</head>
+{% include "header.html" %}
+<body>
+  <h2>HW3 — Gradient and LoG Visualization</h2>
+  <input type="file" id="imageInput" accept="image/*">
+  <button id="processBtn">Process</button>
+  <div id="preview-area">
+    <img id="orig" alt="Original">
+    <img id="gradmag" alt="Gradient Magnitude">
+    <img id="gradang" alt="Gradient Angle">
+    <img id="log" alt="Laplacian of Gaussian">
+  </div>
+
+  <script>
+    const input = document.getElementById('imageInput');
+    const orig = document.getElementById('orig');
+    const btn = document.getElementById('processBtn');
+
+    input.addEventListener('change', e => {
+      const file = e.target.files[0];
+      if (file) orig.src = URL.createObjectURL(file);
+    });
+
+    btn.addEventListener('click', async () => {
+      const file = input.files[0];
+      if (!file) return alert("Upload an image first");
+      const formData = new FormData();
+      formData.append("image", file);
+      const res = await fetch("/hw3/process", { method: "POST", body: formData });
+      const data = await res.json();
+      document.getElementById("gradmag").src = "data:image/png;base64," + data.grad_mag;
+      document.getElementById("gradang").src = "data:image/png;base64," + data.grad_ang;
+      document.getElementById("log").src = "data:image/png;base64," + data.log;
+    });
+  </script>
+</body>
+</html>
