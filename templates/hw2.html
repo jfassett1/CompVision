@@ -1,2 +1,105 @@
-{% include "header.html" %}
-nothing yet
+
+{% include 'header.html' %}
+
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>HW2 – Template Matching</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; }
+        .box { border: 1px solid #ccc; padding: 10px; margin-top: 20px; }
+        img { max-width: 100%; }
+        table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+        th, td { border: 1px solid #ccc; padding: 6px; }
+    </style>
+</head>
+<body>
+
+<h2>HW2: Object Detection via Template Matching (Correlation)</h2>
+
+<div class="box">
+    <form id="form">
+        <label>Scene Image:</label><br>
+        <input type="file" id="scene" accept="image/*" required><br><br>
+
+        <label>Threshold (0–1):</label><br>
+        <input type="number" id="threshold" step="0.01" min="0" max="1" placeholder="0.8"><br><br>
+
+        <label>Max Matches:</label><br>
+        <input type="number" id="max_matches" min="1" placeholder="5"><br><br>
+
+        <button type="submit">Run Detection</button>
+    </form>
+
+    <p id="status"></p>
+</div>
+
+<div class="box">
+    <h3>Result</h3>
+    <div id="result">No image yet.</div>
+</div>
+
+<div class="box">
+    <h3>Matches</h3>
+    <div id="matches">None</div>
+</div>
+
+<script>
+document.getElementById("form").addEventListener("submit", async function(e) {
+    e.preventDefault();
+
+    const fd = new FormData();
+    const scene = document.getElementById("scene").files[0];
+    if (!scene) {
+        document.getElementById("status").textContent = "Select an image.";
+        return;
+    }
+
+    fd.append("scene", scene);
+
+    const threshold = document.getElementById("threshold").value;
+    const maxm = document.getElementById("max_matches").value;
+
+    if (threshold) fd.append("threshold", threshold);
+    if (maxm) fd.append("max_matches", maxm);
+
+    document.getElementById("status").textContent = "Processing...";
+
+    let resp = await fetch("/api/match_templates", { method: "POST", body: fd });
+    let data = await resp.json();
+
+    if (!data.success) {
+        document.getElementById("status").textContent = "Error: " + data.message;
+        return;
+    }
+
+    document.getElementById("status").textContent = "Done.";
+
+    // show output image
+    document.getElementById("result").innerHTML =
+        `<img src="${data.processed_image_url}?t=${Date.now()}">`;
+
+    // matches table
+    if (data.matches.length === 0) {
+        document.getElementById("matches").textContent = "No matches.";
+        return;
+    }
+
+    let html = "<table><tr><th>Name</th><th>Score</th><th>Top-left</th><th>Bottom-right</th></tr>";
+    data.matches.forEach(m => {
+        html += `<tr>
+            <td>${m.template_name}</td>
+            <td>${m.score.toFixed(3)}</td>
+            <td>(${m.top_left[0]}, ${m.top_left[1]})</td>
+            <td>(${m.bottom_right[0]}, ${m.bottom_right[1]})</td>
+        </tr>`;
+    });
+    html += "</table>";
+
+    document.getElementById("matches").innerHTML = html;
+});
+</script>
+
+</body>
+</html>

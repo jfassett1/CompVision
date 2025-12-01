@@ -1,10 +1,12 @@
-from flask import Flask, render_template, request, jsonify
 from src.utils import get_dist
+from flask import Flask, request, jsonify, render_template, url_for
 import numpy as np
 import cv2
 import base64
 from io import BytesIO
 from PIL import Image
+
+from src.template_matching import load_templates, run_template_matching
 
 app = Flask(__name__)
 
@@ -14,9 +16,46 @@ def index():
     return render_template("page.html")
 
 
+TEMPLATE_DIR = "templates_db"
+TEMPLATES = load_templates(TEMPLATE_DIR)
+
+
 @app.route("/2")
-def hw2():
+def hw2_page():
     return render_template("hw2.html")
+
+
+@app.route("/api/match_templates", methods=["POST"])
+def match_templates():
+    if "scene" not in request.files:
+        return jsonify({"success": False, "message": "Missing scene image."}), 400
+
+    scene_file = request.files["scene"]
+    threshold = float(request.form.get("threshold", 0.8))
+    max_matches = int(request.form.get("max_matches", 5))
+
+    # Convert file → cv2 image
+    np_arr = np.frombuffer(scene_file.read(), np.uint8)
+    scene = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    if scene is None:
+        return jsonify({"success": False, "message": "Invalid image."}), 400
+
+    matches, filename = run_template_matching(
+        scene,
+        TEMPLATES,
+        threshold=threshold,
+        max_matches=max_matches,
+        result_dir="static/results",
+    )
+
+    return jsonify(
+        {
+            "success": True,
+            "processed_image_url": url_for("static", filename=f"results/{filename}"),
+            "matches": matches,
+            "message": "Done",
+        }
+    )
 
 
 def encode_img(img):
@@ -75,6 +114,105 @@ def pixel_data():
 
     return jsonify(
         {"status": "success", "message": f"Distance between points: {dist:.2f} in"}
+    )
+
+
+from src.hw4_stitching import (
+    stitch_images_custom,
+    stitch_images_opencv,
+    store_mobile_panorama,
+)
+
+
+@app.route("/4")
+def hw4_page():
+    return render_template("hw4.html")
+
+
+@app.route("/api/hw4_custom_stitch", methods=["POST"])
+def hw4_custom_stitch():
+    files = request.files.getlist("images")
+    if not files or len(files) < 2:
+        return jsonify(
+            {"success": False, "error": "Upload at least 2 images for stitching."}
+        )
+
+    images = []
+    for f in files:
+        file_bytes = np.frombuffer(f.read(), np.uint8)
+        img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        if img is not None:
+            images.append(img)
+
+    if len(images) < 2:
+        return jsonify({"success": False, "error": "Could not decode enough images."})
+
+    try:
+        result = stitch_images_custom(images)
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+    image_url = url_for("static", filename=f"results/{result['filename']}")
+    return jsonify(
+        {
+            "success": True,
+            "image_url": image_url,
+            "stats": result.get("stats", {}),
+        }
+    )
+
+
+@app.route("/api/hw4_opencv_stitch", methods=["POST"])
+def hw4_opencv_stitch():
+    files = request.files.getlist("images")
+    if not files or len(files) < 2:
+        return jsonify(
+            {"success": False, "error": "Upload at least 2 images for stitching."}
+        )
+
+    images = []
+    for f in files:
+        file_bytes = np.frombuffer(f.read(), np.uint8)
+        img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        if img is not None:
+            images.append(img)
+
+    if len(images) < 2:
+        return jsonify({"success": False, "error": "Could not decode enough images."})
+
+    try:
+        result = stitch_images_opencv(images)
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+    image_url = url_for("static", filename=f"results/{result['filename']}")
+    return jsonify(
+        {
+            "success": True,
+            "image_url": image_url,
+            "stats": result.get("stats", {}),
+        }
+    )
+
+
+@app.route("/api/hw4_mobile_panorama", methods=["POST"])
+def hw4_mobile_panorama():
+    f = request.files.get("image", None)
+    if f is None:
+        return jsonify({"success": False, "error": "No image file provided."})
+
+    file_bytes = np.frombuffer(f.read(), np.uint8)
+    img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+    if img is None:
+        return jsonify({"success": False, "error": "Could not decode image."})
+
+    result = store_mobile_panorama(img)
+    image_url = url_for("static", filename=f"results/{result['filename']}")
+    return jsonify(
+        {
+            "success": True,
+            "image_url": image_url,
+        }
     )
 
 

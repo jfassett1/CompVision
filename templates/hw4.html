@@ -1,0 +1,228 @@
+
+{% include 'header.html' %}
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>HW4 - Image Stitching and SIFT</title>
+    <style>
+        .box {
+            border: 1px solid #ccc;
+            padding: 12px;
+            margin: 12px 0;
+        }
+        .row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+        .col {
+            flex: 1 1 30%;
+            min-width: 250px;
+        }
+        img.result-img {
+            max-width: 100%;
+            border: 1px solid #ddd;
+        }
+        table.stats-table {
+            border-collapse: collapse;
+            width: 100%;
+            margin-top: 8px;
+        }
+        table.stats-table th,
+        table.stats-table td {
+            border: 1px solid #ccc;
+            padding: 4px 6px;
+            font-size: 0.9em;
+        }
+        .error {
+            color: #b00;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+<div class="box">
+    <h2>HW4: Image Stitching with Custom SIFT + RANSAC vs OpenCV SIFT</h2>
+    <p>
+        Upload at least 4 images (landscape) or 8 images (portrait) of a scene to build a panorama using:
+        custom SIFT + custom RANSAC, and OpenCV SIFT + OpenCV RANSAC. Then upload your phone's panorama
+        for visual comparison.
+    </p>
+</div>
+
+<div class="box">
+    <h3>1. Multi-image upload for stitching</h3>
+    <input type="file" id="stitch-images" multiple accept="image/*">
+    <div style="margin-top:8px;">
+        <button type="button" onclick="runCustomStitch()">Run Custom SIFT + RANSAC Stitch</button>
+        <button type="button" onclick="runOpenCVStitch()">Run OpenCV SIFT + RANSAC Stitch</button>
+    </div>
+    <div id="stitch-error" class="error"></div>
+</div>
+
+<div class="box">
+    <h3>2. Mobile panorama upload</h3>
+    <input type="file" id="mobile-image" accept="image/*">
+    <div style="margin-top:8px;">
+        <button type="button" onclick="uploadMobilePanorama()">Upload Mobile Panorama</button>
+    </div>
+    <div id="mobile-error" class="error"></div>
+</div>
+
+<div class="box">
+    <h3>Results</h3>
+    <div class="row">
+        <div class="col">
+            <h4>Custom SIFT + RANSAC Panorama</h4>
+            <img id="custom-panorama" class="result-img" alt="Custom panorama result">
+            <div id="custom-stats"></div>
+        </div>
+        <div class="col">
+            <h4>OpenCV SIFT + RANSAC Panorama</h4>
+            <img id="opencv-panorama" class="result-img" alt="OpenCV panorama result">
+            <div id="opencv-stats"></div>
+        </div>
+        <div class="col">
+            <h4>Mobile Device Panorama</h4>
+            <img id="mobile-panorama" class="result-img" alt="Mobile panorama result">
+        </div>
+    </div>
+</div>
+
+<script>
+async function runCustomStitch() {
+    const filesInput = document.getElementById('stitch-images');
+    const errorDiv = document.getElementById('stitch-error');
+    const statsDiv = document.getElementById('custom-stats');
+    errorDiv.textContent = '';
+    statsDiv.innerHTML = '';
+
+    if (!filesInput.files || filesInput.files.length < 2) {
+        errorDiv.textContent = 'Please upload at least 2 images (preferably 4+ for panorama).';
+        return;
+    }
+
+    const formData = new FormData();
+    for (const file of filesInput.files) {
+        formData.append('images', file);
+    }
+
+    try {
+        const response = await fetch('/api/hw4_custom_stitch', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await response.json();
+        if (!data.success) {
+            errorDiv.textContent = data.error || 'Custom stitching failed.';
+            return;
+        }
+        if (data.image_url) {
+            document.getElementById('custom-panorama').src = data.image_url + '?t=' + Date.now();
+        }
+        if (data.stats) {
+            statsDiv.innerHTML = renderStatsTable(data.stats);
+        }
+    } catch (e) {
+        errorDiv.textContent = 'Error calling custom stitching endpoint.';
+    }
+}
+
+async function runOpenCVStitch() {
+    const filesInput = document.getElementById('stitch-images');
+    const errorDiv = document.getElementById('stitch-error');
+    const statsDiv = document.getElementById('opencv-stats');
+    errorDiv.textContent = '';
+    statsDiv.innerHTML = '';
+
+    if (!filesInput.files || filesInput.files.length < 2) {
+        errorDiv.textContent = 'Please upload at least 2 images (preferably 4+ for panorama).';
+        return;
+    }
+
+    const formData = new FormData();
+    for (const file of filesInput.files) {
+        formData.append('images', file);
+    }
+
+    try {
+        const response = await fetch('/api/hw4_opencv_stitch', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await response.json();
+        if (!data.success) {
+            errorDiv.textContent = data.error || 'OpenCV stitching failed.';
+            return;
+        }
+        if (data.image_url) {
+            document.getElementById('opencv-panorama').src = data.image_url + '?t=' + Date.now();
+        }
+        if (data.stats) {
+            statsDiv.innerHTML = renderStatsTable(data.stats);
+        }
+    } catch (e) {
+        errorDiv.textContent = 'Error calling OpenCV stitching endpoint.';
+    }
+}
+
+async function uploadMobilePanorama() {
+    const fileInput = document.getElementById('mobile-image');
+    const errorDiv = document.getElementById('mobile-error');
+    errorDiv.textContent = '';
+
+    if (!fileInput.files || fileInput.files.length !== 1) {
+        errorDiv.textContent = 'Please select a single mobile panorama image.';
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('image', fileInput.files[0]);
+
+    try {
+        const response = await fetch('/api/hw4_mobile_panorama', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await response.json();
+        if (!data.success) {
+            errorDiv.textContent = data.error || 'Mobile panorama upload failed.';
+            return;
+        }
+        if (data.image_url) {
+            document.getElementById('mobile-panorama').src = data.image_url + '?t=' + Date.now();
+        }
+    } catch (e) {
+        errorDiv.textContent = 'Error calling mobile panorama endpoint.';
+    }
+}
+
+function renderStatsTable(stats) {
+    let html = '';
+    const numImages = stats.num_images || 0;
+    const pairs = stats.pair_stats || [];
+
+    html += '<p>Number of images used: ' + numImages + '</p>';
+
+    if (pairs.length === 0) {
+        return html;
+    }
+
+    html += '<table class="stats-table">';
+    html += '<tr><th>Pair</th><th># Matches</th><th># Inliers</th><th>Inlier Ratio</th></tr>';
+    for (const p of pairs) {
+        html += '<tr>';
+        html += '<td>' + (p.pair || '') + '</td>';
+        html += '<td>' + (p.num_matches != null ? p.num_matches : '') + '</td>';
+        html += '<td>' + (p.num_inliers != null ? p.num_inliers : '') + '</td>';
+        html += '<td>' + (p.inlier_ratio != null ? p.inlier_ratio.toFixed(3) : '') + '</td>';
+        html += '</tr>';
+    }
+    html += '</table>';
+
+    return html;
+}
+</script>
+</body>
+</html>
