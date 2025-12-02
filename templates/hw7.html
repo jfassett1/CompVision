@@ -1,0 +1,171 @@
+
+{% include 'header.html' %}
+
+<div class="container">
+  <h1>HW7 – Stereo Size Estimation and Pose &amp; Hand Tracking</h1>
+
+  <div class="box">
+    <h2>Calibrated Stereo Size Estimation (Derivation Placeholder)</h2>
+    <pre>
+## Calibrated Stereo Size Estimation
+
+- Camera model with baseline B, focal length f.
+- Disparity d = x_L - x_R.
+- Depth:
+      Z = f * B / d
+
+- Image-to-3D conversion:
+      X = (x - cx) * Z / f
+      Y = (y - cy) * Z / f
+
+- Rectangular object: compute 3D edges between corner points.
+- Circular object: 3D distance between opposite boundary points → diameter.
+- Polygon: compute 3D distance for every edge.
+
+(Handwritten derivations will be inserted here.)
+    </pre>
+  </div>
+
+  <div class="box">
+    <h2>Uncalibrated Stereo Size Estimation (Derivation Placeholder)</h2>
+    <pre>
+## Uncalibrated Stereo Size Estimation
+
+- Use epipolar constraint x'^T F x = 0.
+- Estimate F from point correspondences.
+- Obtain projective reconstruction.
+- Perform metric upgrade using self-calibration constraints.
+- Resolve scale by fixing one known scene distance.
+- Compute object dimensions from metric 3D point cloud.
+
+(Handwritten derivations will be added here.)
+    </pre>
+  </div>
+
+  <div class="box">
+    <h2>Pose &amp; Hand Tracking (Mediapipe Only)</h2>
+
+    <div class="form-row">
+      <label for="video">Upload a video:</label>
+      <input type="file" id="video" accept="video/*">
+    </div>
+
+    <div class="form-row">
+      <button id="run_pose">Run Pose &amp; Hand Tracking</button>
+    </div>
+
+    <div id="pose_result" class="result-box">
+      No result yet.
+    </div>
+
+    <div class="form-row">
+      <a id="csv_link" href="#" style="display:none;">Download CSV</a>
+    </div>
+
+    <div id="stats_box" class="stats-box" style="display:none;">
+      <h3>Statistics</h3>
+      <pre id="stats_text"></pre>
+    </div>
+
+    <div id="error_box" class="error-box" style="display:none;"></div>
+  </div>
+</div>
+
+<style>
+  .container {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 16px;
+    font-family: Arial, sans-serif;
+  }
+  .box {
+    border: 1px solid #ccc;
+    padding: 16px;
+    margin-bottom: 20px;
+    border-radius: 4px;
+    background-color: #fafafa;
+  }
+  .form-row {
+    margin-bottom: 12px;
+  }
+  #pose_result img {
+    max-width: 100%;
+    border: 1px solid #ccc;
+  }
+  .stats-box {
+    margin-top: 12px;
+    padding: 8px;
+    border: 1px solid #ddd;
+    background-color: #fff;
+  }
+  .error-box {
+    margin-top: 12px;
+    padding: 8px;
+    border: 1px solid #c00;
+    background-color: #fee;
+    color: #900;
+  }
+</style>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  const runBtn = document.getElementById("run_pose");
+  const videoInput = document.getElementById("video");
+  const poseResult = document.getElementById("pose_result");
+  const csvLink = document.getElementById("csv_link");
+  const statsBox = document.getElementById("stats_box");
+  const statsText = document.getElementById("stats_text");
+  const errorBox = document.getElementById("error_box");
+
+  runBtn.addEventListener("click", function () {
+    errorBox.style.display = "none";
+    csvLink.style.display = "none";
+    statsBox.style.display = "none";
+
+    const file = videoInput.files[0];
+    if (!file) {
+      errorBox.textContent = "Please select a video file.";
+      errorBox.style.display = "block";
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("video", file);
+
+    poseResult.innerHTML = "Processing...";
+
+    fetch("/api/hw7_pose", {
+      method: "POST",
+      body: formData,
+    })
+      .then((resp) => resp.json())
+      .then((data) => {
+        if (!data.success) {
+          errorBox.textContent = data.error || "Processing failed.";
+          errorBox.style.display = "block";
+          return;
+        }
+
+        poseResult.innerHTML =
+          '<img src="' + data.preview_image_url + '" alt="Preview">';
+
+        csvLink.href = data.csv_url;
+        csvLink.style.display = "inline";
+
+        if (data.stats) {
+          let s = "";
+          s += "Frames: " + data.stats.num_frames + "\n";
+          s += "Detected frames: " + data.stats.num_detected_frames + "\n";
+          s += "Pose joints: " + data.stats.num_pose_joints + "\n";
+          s += "Hand joints: " + data.stats.num_hand_joints + "\n";
+          statsText.textContent = s;
+          statsBox.style.display = "block";
+        }
+      })
+      .catch((err) => {
+        errorBox.textContent = "Request failed: " + err;
+        errorBox.style.display = "block";
+      });
+  });
+});
+</script>

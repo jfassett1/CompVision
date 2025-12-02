@@ -216,5 +216,157 @@ def hw4_mobile_panorama():
     )
 
 
+from src.hw5_tracking import (
+    decode_video_file,
+    track_marker,
+    track_markerless,
+    track_sam2_from_npz,
+    save_frame_sequence,
+    summarize_tracking,
+)
+
+
+@app.route("/5")
+def hw5_page():
+    return render_template("hw5.html")
+
+
+@app.route("/api/hw5_marker", methods=["POST"])
+def hw5_marker():
+    video_file = request.files.get("video")
+    if not video_file:
+        return jsonify({"success": False, "error": "No video file uploaded."}), 400
+
+    try:
+        frames = decode_video_file(video_file)
+        results, filenames = track_marker(frames, marker_type="aruco")
+        stats = summarize_tracking(results)
+        frame_urls = [url_for("static", filename=fname) for fname in filenames]
+
+        return jsonify(
+            {
+                "success": True,
+                "frames": frame_urls,
+                "stats": stats,
+            }
+        )
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/hw5_markerless", methods=["POST"])
+def hw5_markerless():
+    video_file = request.files.get("video")
+    if not video_file:
+        return jsonify({"success": False, "error": "No video file uploaded."}), 400
+
+    try:
+        frames = decode_video_file(video_file)
+        # No explicit init_bbox from UI; using automatic initialization inside tracker.
+        results, filenames = track_markerless(frames)
+        stats = summarize_tracking(results)
+        frame_urls = [url_for("static", filename=fname) for fname in filenames]
+
+        return jsonify(
+            {
+                "success": True,
+                "frames": frame_urls,
+                "stats": stats,
+            }
+        )
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/hw5_sam2", methods=["POST"])
+def hw5_sam2():
+    video_file = request.files.get("video")
+    npz_file = request.files.get("npz")
+
+    if not video_file:
+        return jsonify({"success": False, "error": "No video file uploaded."}), 400
+    if not npz_file:
+        return jsonify({"success": False, "error": "No NPZ file uploaded."}), 400
+
+    try:
+        frames = decode_video_file(video_file)
+        # track_sam2_from_npz can consume a FileStorage-like object directly
+        results, filenames = track_sam2_from_npz(frames, npz_file)
+        stats = summarize_tracking(results)
+        frame_urls = [url_for("static", filename=fname) for fname in filenames]
+
+        return jsonify(
+            {
+                "success": True,
+                "frames": frame_urls,
+                "stats": stats,
+            }
+        )
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+from src.hw7_pose import (
+    decode_video_file,
+    process_pose_video,
+    save_pose_csv,
+    save_processed_frames,
+)
+
+
+@app.route("/7")
+def hw7_page():
+    return render_template("hw7.html")
+
+
+@app.route("/api/hw7_pose", methods=["POST"])
+def hw7_pose():
+    video_file = request.files.get("video")
+    if video_file is None:
+        return jsonify(success=False, error="No video uploaded."), 400
+
+    try:
+        frames = decode_video_file(video_file)
+        if not frames:
+            return jsonify(success=False, error="Could not decode frames."), 400
+
+        processed_frames, keypoints = process_pose_video(frames)
+
+        preview_file = save_processed_frames(processed_frames)
+        csv_file = save_pose_csv(keypoints)
+
+        # Stats
+        num_frames = len(frames)
+        num_detect = sum(
+            1
+            for f in keypoints
+            if f["pose"] or f["hands"]["left"] or f["hands"]["right"]
+        )
+
+        pose_joints = set()
+        hand_joints = set()
+        for f in keypoints:
+            pose_joints.update(f["pose"].keys())
+            hand_joints.update(f["hands"]["left"].keys())
+            hand_joints.update(f["hands"]["right"].keys())
+
+        stats = {
+            "num_frames": num_frames,
+            "num_detected_frames": num_detect,
+            "num_pose_joints": len(pose_joints),
+            "num_hand_joints": len(hand_joints),
+        }
+
+        return jsonify(
+            success=True,
+            preview_image_url=url_for("static", filename="results/" + preview_file),
+            csv_url=url_for("static", filename="results/" + csv_file),
+            stats=stats,
+        )
+
+    except Exception as e:
+        return jsonify(success=False, error=str(e)), 500
+
+
 if __name__ == "__main__":
     app.run(debug=True)
