@@ -5,7 +5,6 @@ from typing import List, Dict, Any, Tuple
 import cv2
 import numpy as np
 
-
 RESULTS_DIR = os.path.join("static", "results")
 
 
@@ -18,44 +17,59 @@ def _unique_filename(prefix: str = "hw4") -> str:
 
 
 # --------------------------
+# Common helpers
+# --------------------------
+
+
+def _preprocess_image(image_bgr: np.ndarray, max_dim: int = 700) -> np.ndarray:
+    """
+    Downscale image to max_dim on the longer side to keep custom SIFT fast.
+    """
+    h, w = image_bgr.shape[:2]
+    scale = max_dim / max(h, w)
+    if scale < 1.0:
+        new_w = int(w * scale)
+        new_h = int(h * scale)
+        image_bgr = cv2.resize(image_bgr, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    return image_bgr
+
+
+# --------------------------
 # Custom SIFT implementation
 # --------------------------
 
 
 def _gaussian_pyramid(
-    gray: np.ndarray, num_scales: int = 5, sigma: float = 1.6
+    gray: np.ndarray, num_scales: int = 3, sigma: float = 1.6
 ) -> List[np.ndarray]:
     """
-    Build a simple Gaussian pyramid (single octave, multiple scales).
+    Single-octave Gaussian pyramid: base + num_scales + extra for DoG.
     """
     gray = gray.astype(np.float32) / 255.0
     k = 2 ** (1.0 / num_scales)
-    sigmas = [sigma * (k**i) for i in range(num_scales + 3)]  # extra for DoG as in SIFT
+    sigmas = [sigma * (k**i) for i in range(num_scales + 3)]
     gaussians = []
     for s in sigmas:
-        gaussians.append(cv2.GaussianBlur(gray, ksize=(0, 0), sigmaX=s, sigmaY=s))
+        gaussians.append(cv2.GaussianBlur(gray, (0, 0), s))
     return gaussians
 
 
 def _dog_pyramid(gaussians: List[np.ndarray]) -> List[np.ndarray]:
-    dogs = []
-    for i in range(1, len(gaussians)):
-        dogs.append(gaussians[i] - gaussians[i - 1])
-    return dogs
+    return [gaussians[i + 1] - gaussians[i] for i in range(len(gaussians) - 1)]
 
 
 def _detect_keypoints(
-    gaussians: List[np.ndarray],
     dogs: List[np.ndarray],
-    contrast_thresh: float = 0.03,
-    edge_thresh: float = 10.0,
+    contrast_thresh: float = 0.01,
+    max_keypoints: int = 400,
 ) -> List[Dict[str, Any]]:
     """
-    Very simplified SIFT-like keypoint detection in DoG scale space.
+    Simplified DoG extrema detection.
+    Returns at most max_keypoints with largest |DoG| response.
     """
-    keypoints = []
-    num_scales = len(dogs)
     h, w = dogs[0].shape
+    num_scales = len(dogs)
+    candidates = []
 
     for s in range(1, num_scales - 1):
         dog_prev = dogs[s - 1]
@@ -63,64 +77,71 @@ def _detect_keypoints(
         dog_next = dogs[s + 1]
 
         for y in range(1, h - 1):
+            row_prev = dog_prev[y - 1 : y + 2]
+            row_cur = dog_cur[y - 1 : y + 2]
+            row_next = dog_next[y - 1 : y + 2]
             for x in range(1, w - 1):
                 val = dog_cur[y, x]
                 if abs(val) < contrast_thresh:
                     continue
 
-                patch_prev = dog_prev[y - 1 : y + 2, x - 1 : x + 2]
-                patch_cur = dog_cur[y - 1 : y + 2, x - 1 : x + 2]
-                patch_next = dog_next[y - 1 : y + 2, x - 1 : x + 2]
+                patch_prev = row_prev[:, x - 1 : x + 2]
+                patch_cur = row_cur[:, x - 1 : x + 2]
+                patch_next = row_next[:, x - 1 : x + 2]
 
-                local_patch = np.stack([patch_prev, patch_cur, patch_next], axis=0)
+                local_stack = np.stack([patch_prev, patch_cur, patch_next], axis=0)
                 if val > 0:
-                    if val < local_patch.max():
+                    if val < local_stack.max():
                         continue
                 else:
-                    if val > local_patch.min():
+                    if val > local_stack.min():
                         continue
 
-                # Edge response rejection using Hessian at scale s
-                img = gaussians[s + 1]  # roughly aligned with dog_cur
-                dx = (img[y, x + 1] - img[y, x - 1]) * 0.5
-                dy = (img[y + 1, x] - img[y - 1, x]) * 0.5
-                dxx = img[y, x + 1] - 2 * img[y, x] + img[y, x - 1]
-                dyy = img[y + 1, x] - 2 * img[y, x] + img[y - 1, x]
-                dxy = (
-                    img[y + 1, x + 1]
-                    - img[y + 1, x - 1]
-                    - img[y - 1, x + 1]
-                    + img[y - 1, x - 1]
-                ) * 0.25
+                candidates.append(
+                    (abs(val), x, y, s + 1)
+                )  # s+1 aligns with Gaussian index
 
-                tr = dxx + dyy
-                det = dxx * dyy - dxy * dxy
-                if det <= 0:
-                    continue
-                r = edge_thresh
-                if (tr * tr) / det >= ((r + 1) ** 2) / r:
-                    continue
+    if not candidates:
+        return []
 
-                keypoints.append(
-                    {
-                        "x": float(x),
-                        "y": float(y),
-                        "scale_idx": s + 1,  # align with gaussians index
-                    }
-                )
+    # keep strongest responses
+    candidates.sort(key=lambda t: t[0], reverse=True)
+    candidates = candidates[:max_keypoints]
 
+    keypoints = []
+    for _, x, y, s_idx in candidates:
+        keypoints.append({"x": float(x), "y": float(y), "scale_idx": int(s_idx)})
     return keypoints
 
 
-def _assign_orientations(
+def _prepare_gradients(
     gaussians: List[np.ndarray],
+) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+    """
+    Precompute gradient magnitude and orientation for each Gaussian level.
+    """
+    mags = []
+    oris = []
+    for img in gaussians:
+        gx = cv2.Sobel(img, cv2.CV_32F, 1, 0, ksize=3)
+        gy = cv2.Sobel(img, cv2.CV_32F, 0, 1, ksize=3)
+        mag = cv2.magnitude(gx, gy)
+        ori = cv2.phase(gx, gy, angleInDegrees=True)  # 0..360
+        mags.append(mag)
+        oris.append(ori)
+    return mags, oris
+
+
+def _assign_orientations(
+    mags: List[np.ndarray],
+    oris: List[np.ndarray],
     keypoints: List[Dict[str, Any]],
     radius_factor: float = 3.0,
     num_bins: int = 36,
     peak_ratio: float = 0.8,
 ) -> List[Dict[str, Any]]:
     """
-    Assign dominant orientation(s) to each keypoint.
+    Orientation assignment around each keypoint using histogram of gradient orientations.
     """
     oriented_kps = []
 
@@ -128,124 +149,142 @@ def _assign_orientations(
         x = kp["x"]
         y = kp["y"]
         s_idx = kp["scale_idx"]
-        img = gaussians[s_idx]
+        mag = mags[s_idx]
+        ori = oris[s_idx]
 
-        sigma = 1.6  # approximate
+        sigma = 1.6
         radius = int(radius_factor * sigma)
+        ix = int(round(x))
+        iy = int(round(y))
+
+        if ix < radius or iy < radius:
+            continue
+        if ix >= mag.shape[1] - radius or iy >= mag.shape[0] - radius:
+            continue
+
+        y0 = iy - radius
+        y1 = iy + radius + 1
+        x0 = ix - radius
+        x1 = ix + radius + 1
+
+        patch_mag = mag[y0:y1, x0:x1]
+        patch_ori = ori[y0:y1, x0:x1]
+
+        yy, xx = np.mgrid[y0:y1, x0:x1]
+        yy = yy.astype(np.float32)
+        xx = xx.astype(np.float32)
+        weight = np.exp(-((xx - x) ** 2 + (yy - y) ** 2) / (2 * (sigma**2)))
+
         hist = np.zeros(num_bins, dtype=np.float32)
+        angles = patch_ori
+        magnitudes = patch_mag * weight
 
-        y0 = max(1, int(round(y)) - radius)
-        y1 = min(img.shape[0] - 2, int(round(y)) + radius)
-        x0 = max(1, int(round(x)) - radius)
-        x1 = min(img.shape[1] - 2, int(round(x)) + radius)
-
-        for yy in range(y0, y1 + 1):
-            for xx in range(x0, x1 + 1):
-                dx = img[yy, xx + 1] - img[yy, xx - 1]
-                dy = img[yy - 1, xx] - img[yy + 1, xx]
-                mag = np.sqrt(dx * dx + dy * dy)
-                angle = np.degrees(np.arctan2(dy, dx)) % 360.0
-
-                weight = np.exp(-((xx - x) ** 2 + (yy - y) ** 2) / (2 * sigma * sigma))
-                bin_idx = int(round(angle * num_bins / 360.0)) % num_bins
-                hist[bin_idx] += weight * mag
+        bin_f = angles * (num_bins / 360.0)
+        bin_idx = np.floor(bin_f).astype(int) % num_bins
+        for b, m in zip(bin_idx.ravel(), magnitudes.ravel()):
+            hist[b] += m
 
         max_val = hist.max()
         if max_val <= 0:
             continue
 
-        for bin_idx, val in enumerate(hist):
-            if val >= peak_ratio * max_val:
-                angle = (360.0 * bin_idx) / num_bins
-                kp_copy = dict(kp)
-                kp_copy["angle"] = angle
-                oriented_kps.append(kp_copy)
+        for bin_id, v in enumerate(hist):
+            if v >= peak_ratio * max_val:
+                angle = (360.0 * bin_id) / num_bins
+                new_kp = dict(kp)
+                new_kp["angle"] = angle
+                oriented_kps.append(new_kp)
 
     return oriented_kps
 
 
 def _compute_descriptors(
-    gaussians: List[np.ndarray],
+    mags: List[np.ndarray],
+    oris: List[np.ndarray],
     keypoints: List[Dict[str, Any]],
-    window_width: int = 4,
-    num_bins: int = 8,
     descriptor_width: int = 4,
+    num_bins: int = 8,
+    window_size: int = 4,
 ) -> Tuple[np.ndarray, List[Tuple[float, float]]]:
     """
-    Compute SIFT-like 128D descriptors.
+    SIFT-like 4x4 cells * 8 bins = 128-D descriptor.
+    Uses precomputed magnitude and orientation images.
     """
     descriptors = []
     locations = []
+
+    cell_size = window_size  # pixels per cell side
+    half_size = descriptor_width * cell_size // 2  # e.g. 8
 
     for kp in keypoints:
         x = kp["x"]
         y = kp["y"]
         s_idx = kp["scale_idx"]
-        angle = np.deg2rad(kp["angle"])
-        img = gaussians[s_idx]
+        angle = kp["angle"]
+        mag_img = mags[s_idx]
+        ori_img = oris[s_idx]
 
-        # 16x16 window around keypoint
-        half_width = window_width * descriptor_width // 2  # 8 for 4x4
         ix = int(round(x))
         iy = int(round(y))
 
-        if ix - half_width < 1 or ix + half_width >= img.shape[1] - 1:
+        if ix - half_size < 1 or iy - half_size < 1:
             continue
-        if iy - half_width < 1 or iy + half_width >= img.shape[0] - 1:
+        if (
+            ix + half_size >= mag_img.shape[1] - 1
+            or iy + half_size >= mag_img.shape[0] - 1
+        ):
             continue
 
-        cos_t = np.cos(angle)
-        sin_t = np.sin(angle)
-        hist_tensor = np.zeros(
+        cos_t = np.cos(np.deg2rad(angle))
+        sin_t = np.sin(np.deg2rad(angle))
+
+        hist = np.zeros(
             (descriptor_width, descriptor_width, num_bins), dtype=np.float32
         )
 
-        for dy in range(-half_width, half_width):
-            for dx in range(-half_width, half_width):
+        for dy in range(-half_size, half_size):
+            for dx in range(-half_size, half_size):
+                # rotate offset
                 rx = cos_t * dx + sin_t * dy
                 ry = -sin_t * dx + cos_t * dy
 
-                bin_x = (rx / window_width) + descriptor_width / 2 - 0.5
-                bin_y = (ry / window_width) + descriptor_width / 2 - 0.5
-                if (
-                    bin_x < 0
-                    or bin_x >= descriptor_width
-                    or bin_y < 0
-                    or bin_y >= descriptor_width
-                ):
+                cx = rx / cell_size + descriptor_width / 2 - 0.5
+                cy = ry / cell_size + descriptor_width / 2 - 0.5
+                if cx < 0 or cx >= descriptor_width or cy < 0 or cy >= descriptor_width:
                     continue
 
-                xp = ix + dx
-                yp = iy + dy
+                px = ix + dx
+                py = iy + dy
 
-                gx = img[yp, xp + 1] - img[yp, xp - 1]
-                gy = img[yp - 1, xp] - img[yp + 1, xp]
-                mag = np.sqrt(gx * gx + gy * gy)
-                theta = (np.arctan2(gy, gx) - angle) % (2 * np.pi)
-                bin_o = theta * num_bins / (2 * np.pi)
+                m = mag_img[py, px]
+                theta = (ori_img[py, px] - angle) % 360.0
 
-                mag_weight = mag * np.exp(
+                # Gaussian weighting over the descriptor window
+                weight = np.exp(
                     -(rx * rx + ry * ry)
-                    / (2 * (0.5 * descriptor_width * window_width) ** 2)
+                    / (2 * (0.5 * descriptor_width * cell_size) ** 2)
                 )
+                m *= weight
 
-                bx0 = int(np.floor(bin_x))
-                by0 = int(np.floor(bin_y))
-                bo0 = int(np.floor(bin_o))
+                bin_o_f = theta * (num_bins / 360.0)
+                bin_o = int(np.floor(bin_o_f)) % num_bins
 
-                hist_tensor[by0, bx0, bo0 % num_bins] += mag_weight
+                bx = int(np.floor(cx))
+                by = int(np.floor(cy))
 
-        desc = hist_tensor.flatten()
+                hist[by, bx, bin_o] += m
+
+        desc = hist.flatten()
         norm = np.linalg.norm(desc)
         if norm > 1e-7:
-            desc = desc / norm
+            desc /= norm
             desc = np.clip(desc, 0, 0.2)
-            desc = desc / (np.linalg.norm(desc) + 1e-7)
+            desc /= np.linalg.norm(desc) + 1e-7
 
         descriptors.append(desc.astype(np.float32))
         locations.append((x, y))
 
-    if len(descriptors) == 0:
+    if not descriptors:
         return np.zeros(
             (0, descriptor_width * descriptor_width * num_bins), dtype=np.float32
         ), []
@@ -257,14 +296,21 @@ def _sift_features_custom(
     image_bgr: np.ndarray,
 ) -> Tuple[np.ndarray, List[Tuple[float, float]]]:
     """
-    Full custom SIFT pipeline: Gaussian pyramid, DoG, keypoints, orientation, descriptor.
+    Full custom SIFT-like pipeline: Gaussian pyramid, DoG, keypoints, orientation, descriptor.
     """
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
-    gaussians = _gaussian_pyramid(gray)
+    gaussians = _gaussian_pyramid(gray, num_scales=3, sigma=1.6)
     dogs = _dog_pyramid(gaussians)
-    kps = _detect_keypoints(gaussians, dogs)
-    oriented_kps = _assign_orientations(gaussians, kps)
-    descriptors, locations = _compute_descriptors(gaussians, oriented_kps)
+    keypoints = _detect_keypoints(dogs, contrast_thresh=0.01, max_keypoints=400)
+    if not keypoints:
+        return np.zeros((0, 128), dtype=np.float32), []
+
+    mags, oris = _prepare_gradients(gaussians)
+    oriented_kps = _assign_orientations(mags, oris, keypoints)
+    if not oriented_kps:
+        return np.zeros((0, 128), dtype=np.float32), []
+
+    descriptors, locations = _compute_descriptors(mags, oris, oriented_kps)
     return descriptors, locations
 
 
@@ -289,38 +335,36 @@ def _match_descriptors(
         d2 = dist[idxs[1]]
         if d1 < ratio * d2:
             matches.append((i, int(idxs[0])))
-
     return matches
 
 
 def _compute_homography(src_pts: np.ndarray, dst_pts: np.ndarray) -> np.ndarray:
     """
-    Compute homography H such that dst ~ H * src via DLT.
-    src_pts, dst_pts: (N, 2)
+    DLT homography: dst ~ H * src.
     """
     n = src_pts.shape[0]
     A = []
     for i in range(n):
-        x, y = src_pts[i, 0], src_pts[i, 1]
-        u, v = dst_pts[i, 0], dst_pts[i, 1]
+        x, y = src_pts[i]
+        u, v = dst_pts[i]
         A.append([-x, -y, -1, 0, 0, 0, x * u, y * u, u])
         A.append([0, 0, 0, -x, -y, -1, x * v, y * v, v])
     A = np.asarray(A, dtype=np.float64)
     _, _, Vt = np.linalg.svd(A)
-    h = Vt[-1, :]
+    h = Vt[-1]
     H = h.reshape(3, 3)
-    return H / (H[2, 2] + 1e-12)
+    H /= H[2, 2] + 1e-12
+    return H
 
 
 def _ransac_homography(
     src_pts: np.ndarray,
     dst_pts: np.ndarray,
-    num_iterations: int = 1000,
+    num_iterations: int = 400,
     reproj_thresh: float = 3.0,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Manual RANSAC for homography estimation.
-    Returns best H and inlier mask.
+    Manual RANSAC for homography.
     """
     num_points = src_pts.shape[0]
     if num_points < 4:
@@ -344,10 +388,9 @@ def _ransac_homography(
 
         proj = (H @ src_h.T).T
         proj = proj[:, :2] / proj[:, 2:3]
-
         errors = np.linalg.norm(proj - dst_pts, axis=1)
         inliers = errors < reproj_thresh
-        count = np.sum(inliers)
+        count = int(np.sum(inliers))
 
         if count > best_count:
             best_count = count
@@ -357,7 +400,6 @@ def _ransac_homography(
     if best_H is None:
         return None, None
 
-    # Refine with all inliers
     if np.sum(best_inliers) >= 4:
         H_refined = _compute_homography(src_pts[best_inliers], dst_pts[best_inliers])
     else:
@@ -370,7 +412,7 @@ def _pairwise_homography_custom(
     img1: np.ndarray, img2: np.ndarray
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
     """
-    Compute homography from img2 to img1 using custom SIFT + RANSAC.
+    Homography from img2 to img1 using custom SIFT + custom RANSAC.
     """
     desc1, loc1 = _sift_features_custom(img1)
     desc2, loc2 = _sift_features_custom(img2)
@@ -414,8 +456,12 @@ def _pairwise_homography_opencv(
     img1: np.ndarray, img2: np.ndarray
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
     """
-    Compute homography from img2 to img1 using OpenCV SIFT + findHomography(RANSAC).
+    Homography from img2 to img1 using OpenCV SIFT + findHomography(RANSAC).
     """
+    # Use same downscaling for fairness and speed
+    img1 = _preprocess_image(img1)
+    img2 = _preprocess_image(img2)
+
     gray1 = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY)
     gray2 = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
 
@@ -472,7 +518,7 @@ def _pairwise_homography_opencv(
 
 
 # --------------------------
-# Common stitching function
+# Stitching and blending
 # --------------------------
 
 
@@ -480,27 +526,43 @@ def _warp_and_blend(
     images: List[np.ndarray], homographies: List[np.ndarray], prefix: str
 ) -> str:
     """
-    Warp all images into a common canvas using given homographies to image 0,
-    and blend by simple averaging.
+    Warp all images into a common canvas and blend with feathered weights.
+    Uses the middle image as the reference view to reduce distortion.
     """
     _ensure_results_dir()
 
-    h0, w0 = images[0].shape[:2]
-    corners = []
+    num_images = len(images)
+    if num_images == 0:
+        raise ValueError("No images to stitch.")
 
+    # --- Re-center homographies around the middle image to reduce distortion ---
+    # Incoming homographies map each image -> image 0.
+    mid = num_images // 2
+    H_mid = homographies[mid].astype(np.float64)
+    H_mid_inv = np.linalg.inv(H_mid + 1e-12 * np.eye(3))
+
+    centered_H = []
+    for H in homographies:
+        Hc = H_mid_inv @ H  # map each image into "middle" frame coordinates
+        Hc /= Hc[2, 2] + 1e-12
+        centered_H.append(Hc.astype(np.float32))
+
+    # --- Compute canvas bounds with padding ---
+    corners_all = []
     for i, img in enumerate(images):
         h, w = img.shape[:2]
         pts = np.array([[0, 0], [w, 0], [w, h], [0, h]], dtype=np.float32)
         pts_h = np.hstack([pts, np.ones((4, 1), dtype=np.float32)])
-        warped = (homographies[i] @ pts_h.T).T
+        warped = (centered_H[i] @ pts_h.T).T
         warped = warped[:, :2] / warped[:, 2:3]
-        corners.append(warped)
+        corners_all.append(warped)
 
-    corners = np.vstack(corners)
-    x_min = int(np.floor(corners[:, 0].min()))
-    x_max = int(np.ceil(corners[:, 0].max()))
-    y_min = int(np.floor(corners[:, 1].min()))
-    y_max = int(np.ceil(corners[:, 1].max()))
+    corners_all = np.vstack(corners_all)
+    pad = 100  # pixels of padding to avoid tight clipping
+    x_min = int(np.floor(corners_all[:, 0].min())) - pad
+    x_max = int(np.ceil(corners_all[:, 0].max())) + pad
+    y_min = int(np.floor(corners_all[:, 1].min())) - pad
+    y_max = int(np.ceil(corners_all[:, 1].max())) + pad
 
     offset_x = -x_min if x_min < 0 else 0
     offset_y = -y_min if y_min < 0 else 0
@@ -510,18 +572,36 @@ def _warp_and_blend(
 
     T = np.array([[1, 0, offset_x], [0, 1, offset_y], [0, 0, 1]], dtype=np.float32)
 
+    # --- Allocate accumulators ---
     acc = np.zeros((height, width, 3), dtype=np.float32)
     weight = np.zeros((height, width, 1), dtype=np.float32)
 
+    # --- Warp each image with a feathered mask ---
     for i, img in enumerate(images):
-        H = T @ homographies[i]
-        warped = cv2.warpPerspective(img.astype(np.float32), H, (width, height))
-        mask = (warped.sum(axis=2, keepdims=True) > 0).astype(np.float32)
-        acc += warped * mask
-        weight += mask
+        img_f = img.astype(np.float32)
 
+        h, w = img.shape[:2]
+        # mask = 1 inside the image, 0 outside, then distance transform for feathering
+        mask = np.ones((h, w), dtype=np.uint8) * 255
+        dist = cv2.distanceTransform(mask, cv2.DIST_L2, 3)
+        if dist.max() > 0:
+            dist = dist / dist.max()
+        else:
+            dist = np.ones_like(dist, dtype=np.float32)
+
+        H_total = T @ centered_H[i]
+        warped_img = cv2.warpPerspective(img_f, H_total, (width, height))
+        warped_w = cv2.warpPerspective(dist, H_total, (width, height))
+
+        warped_w = warped_w[..., None].astype(np.float32)
+
+        acc += warped_img * warped_w
+        weight += warped_w
+
+    # Avoid division by zero
     weight[weight == 0] = 1.0
-    pano = (acc / weight).astype(np.uint8)
+    pano = acc / weight
+    pano = np.clip(pano, 0, 255).astype(np.uint8)
 
     filename = _unique_filename(prefix)
     out_path = os.path.join(RESULTS_DIR, filename)
@@ -530,23 +610,25 @@ def _warp_and_blend(
 
 
 # --------------------------
-# Public API functions
+# Public API
 # --------------------------
 
 
 def stitch_images_custom(images: List[np.ndarray]) -> Dict[str, Any]:
     """
-    Custom SIFT + custom RANSAC stitching for a list of images.
-    images: list of BGR np.ndarray.
+    Custom SIFT + custom RANSAC stitching.
     """
     if len(images) < 2:
         raise ValueError("Need at least two images for stitching.")
 
+    # Preprocess (downscale) all images
+    proc_images = [_preprocess_image(img) for img in images]
+
     homographies = [np.eye(3, dtype=np.float32)]
     pair_stats = []
 
-    for i in range(1, len(images)):
-        H, stats = _pairwise_homography_custom(images[i - 1], images[i])
+    for i in range(1, len(proc_images)):
+        H, stats = _pairwise_homography_custom(proc_images[i - 1], proc_images[i])
         stats["pair"] = f"{i - 1}-{i}"
         pair_stats.append(stats)
 
@@ -558,12 +640,12 @@ def stitch_images_custom(images: List[np.ndarray]) -> Dict[str, Any]:
         H_to_base = homographies[i - 1] @ H
         homographies.append(H_to_base.astype(np.float32))
 
-    filename = _warp_and_blend(images, homographies, prefix="hw4_custom")
+    filename = _warp_and_blend(proc_images, homographies, prefix="hw4_custom")
 
     return {
         "filename": filename,
         "stats": {
-            "num_images": len(images),
+            "num_images": len(proc_images),
             "pair_stats": pair_stats,
         },
     }
@@ -571,17 +653,19 @@ def stitch_images_custom(images: List[np.ndarray]) -> Dict[str, Any]:
 
 def stitch_images_opencv(images: List[np.ndarray]) -> Dict[str, Any]:
     """
-    OpenCV SIFT + OpenCV findHomography(RANSAC) stitching for a list of images.
-    images: list of BGR np.ndarray.
+    OpenCV SIFT + OpenCV RANSAC stitching.
     """
     if len(images) < 2:
         raise ValueError("Need at least two images for stitching.")
 
+    # Use preprocessed images for consistency
+    proc_images = [_preprocess_image(img) for img in images]
+
     homographies = [np.eye(3, dtype=np.float32)]
     pair_stats = []
 
-    for i in range(1, len(images)):
-        H, stats = _pairwise_homography_opencv(images[i - 1], images[i])
+    for i in range(1, len(proc_images)):
+        H, stats = _pairwise_homography_opencv(proc_images[i - 1], proc_images[i])
         stats["pair"] = f"{i - 1}-{i}"
         pair_stats.append(stats)
 
@@ -593,12 +677,12 @@ def stitch_images_opencv(images: List[np.ndarray]) -> Dict[str, Any]:
         H_to_base = homographies[i - 1] @ H
         homographies.append(H_to_base.astype(np.float32))
 
-    filename = _warp_and_blend(images, homographies, prefix="hw4_opencv")
+    filename = _warp_and_blend(proc_images, homographies, prefix="hw4_opencv")
 
     return {
         "filename": filename,
         "stats": {
-            "num_images": len(images),
+            "num_images": len(proc_images),
             "pair_stats": pair_stats,
         },
     }
@@ -607,7 +691,6 @@ def stitch_images_opencv(images: List[np.ndarray]) -> Dict[str, Any]:
 def store_mobile_panorama(image: np.ndarray) -> Dict[str, Any]:
     """
     Save a single mobile panorama image to static/results/ and return filename.
-    image: BGR np.ndarray.
     """
     _ensure_results_dir()
     filename = _unique_filename("hw4_mobile")

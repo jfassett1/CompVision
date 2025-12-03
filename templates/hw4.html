@@ -108,6 +108,8 @@ async function runCustomStitch() {
         formData.append('images', file);
     }
 
+    document.body.style.cursor = 'wait';
+
     try {
         const response = await fetch('/api/hw4_custom_stitch', {
             method: 'POST',
@@ -126,6 +128,8 @@ async function runCustomStitch() {
         }
     } catch (e) {
         errorDiv.textContent = 'Error calling custom stitching endpoint.';
+    } finally {
+        document.body.style.cursor = 'default';
     }
 }
 
@@ -146,6 +150,8 @@ async function runOpenCVStitch() {
         formData.append('images', file);
     }
 
+    document.body.style.cursor = 'wait';
+
     try {
         const response = await fetch('/api/hw4_opencv_stitch', {
             method: 'POST',
@@ -164,6 +170,8 @@ async function runOpenCVStitch() {
         }
     } catch (e) {
         errorDiv.textContent = 'Error calling OpenCV stitching endpoint.';
+    } finally {
+        document.body.style.cursor = 'default';
     }
 }
 
@@ -180,6 +188,8 @@ async function uploadMobilePanorama() {
     const formData = new FormData();
     formData.append('image', fileInput.files[0]);
 
+    document.body.style.cursor = 'wait';
+
     try {
         const response = await fetch('/api/hw4_mobile_panorama', {
             method: 'POST',
@@ -195,6 +205,8 @@ async function uploadMobilePanorama() {
         }
     } catch (e) {
         errorDiv.textContent = 'Error calling mobile panorama endpoint.';
+    } finally {
+        document.body.style.cursor = 'default';
     }
 }
 
