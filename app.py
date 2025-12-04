@@ -18,7 +18,6 @@ def index():
 
 
 TEMPLATE_DIR = "templates_db"
-TEMPLATES = load_templates(TEMPLATE_DIR)
 
 
 @app.route("/static/results/hw2_generated_templates/")
