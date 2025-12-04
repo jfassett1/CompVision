@@ -7,7 +7,6 @@ from io import BytesIO
 from PIL import Image
 import uuid
 import os
-from src.template_matching import load_templates, run_template_matching
 
 app = Flask(__name__)
 
