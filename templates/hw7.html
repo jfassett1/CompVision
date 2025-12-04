@@ -1,199 +1,202 @@
 
 {% include 'header.html' %}
 
-<div class="container">
-  <h1>HW7 – Stereo Size Estimation and Real-time Pose &amp; Hand Tracking</h1>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>HW7 – Pose & Hand Tracking (Holistic JS)</title>
 
-  <!-- Real-time (1 FPS) webcam-based pose & hand tracking ONLY -->
-  <div class="box">
-    <a href="https://drive.google.com/file/d/1rw9fGYkZ3CxwvSC-RMW9q2TBRbU2uj_Z/view?usp=sharing">Video</a>
-    <h2>Real-time Pose &amp; Hand Tracking (Webcam, ~1 FPS, Mediapipe)</h2>
-
-    <p>
-      A frame is captured approximately once per second from the webcam, sent to the
-      server, processed by Mediapipe, and only the <strong>processed frame</strong>
-      (with skeleton and hand overlays) is displayed below. The raw webcam feed is
-      not shown. All detected keypoints are continuously appended to a CSV file
-      for this session.
-    </p>
-
-    <!-- Hidden video element used only as a capture source -->
-    <video id="rt_video" autoplay playsinline muted style="display:none;"></video>
-
-    <div class="form-row">
-      <button id="start_rt">Start Real-Time</button>
-      <button id="stop_rt">Stop</button>
-    </div>
-
-    <div id="rt_result" class="result-box">
-      <p id="rt_status">Processed webcam output will appear here.</p>
-      <img id="rt_image" alt="RT preview" style="display:none;">
-    </div>
-
-    <div class="form-row">
-      <a id="rt_csv_link" href="#" style="display:none;">Download CSV (this session)</a>
-    </div>
-
-    <div id="rt_error_box" class="error-box" style="display:none;"></div>
-  </div>
-</div>
+<!-- Mediapipe Holistic (NO external model downloads required) -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
 
 <style>
-  .container {
-    max-width: 960px;
-    margin: 0 auto;
-    padding: 16px;
+  body {
     font-family: Arial, sans-serif;
+    margin: 20px;
+    background: #fafafa;
+  }
+  .container {
+    max-width: 1000px;
+    margin: auto;
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+  }
+  h1 {
+    text-align: center;
+    margin-bottom: 20px;
   }
   .box {
     border: 1px solid #ccc;
-    padding: 16px;
+    background: #fdfdfd;
+    padding: 12px;
     margin-bottom: 20px;
-    border-radius: 4px;
-    background-color: #fafafa;
+    border-radius: 6px;
   }
-  .form-row {
-    margin-bottom: 12px;
+  .video-wrapper {
+    position: relative;
+    width: 640px;
+    height: 480px;
+    margin: auto;
+    background: black;
+    border-radius: 8px;
+    overflow: hidden;
   }
-  .result-box {
-    min-height: 320px; /* keep layout stable */
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: flex-start;
+  #input_video { display: none; }
+  #output_canvas {
+    width: 100%;
+    height: 100%;
   }
-  #rt_image {
-    max-width: 100%;
-    border: 1px solid #ccc;
-    margin-top: 8px;
+  button {
+    padding: 10px 20px;
+    margin: 6px;
+    font-size: 16px;
+    border-radius: 5px;
+    border: none;
+    cursor: pointer;
   }
-  .error-box {
-    margin-top: 12px;
-    padding: 8px;
-    border: 1px solid #c00;
-    background-color: #fee;
-    color: #900;
-  }
-  pre {
-    white-space: pre-wrap;
-    font-size: 0.9em;
+  .start { background: #1FA650; color: white; }
+  .stop { background: #C62828; color: white; }
+  .download { background: #1565C0; color: white; display:none; }
+  textarea {
+    width: 100%; height: 300px;
+    font-family: monospace;
+    margin-top: 10px;
+    background: #f3f3f3;
   }
 </style>
+</head>
+
+<body>
+<div class="container">
+  <h1>HW7 – Real-Time Pose & Hand Tracking (Client-side)</h1>
+
+  <!-- REALTIME POSE HAND TRACKING -->
+  <div class="box">
+    <h2>Real-time Pose + Hand Tracking (Mediapipe Holistic)</h2>
+
+    <div style="text-align:center;">
+      <button class="start" onclick="startCamera()">Start Camera</button>
+      <button class="stop" onclick="stopCamera()">Stop</button>
+      <button class="download" id="downloadBtn" onclick="downloadCSV()">Download CSV</button>
+    </div>
+
+    <div class="video-wrapper">
+      <video id="input_video"></video>
+      <canvas id="output_canvas" width="640" height="480"></canvas>
+    </div>
+
+    <textarea id="csv_output" readonly placeholder="CSV data will appear here..."></textarea>
+  </div>
+</div>
+
 
 <script>
-document.addEventListener("DOMContentLoaded", function () {
-  // Real-time (1 FPS) webcam pose/hand
-  const rtVideo = document.getElementById("rt_video"); // hidden source
-  const rtImage = document.getElementById("rt_image");
-  const rtStatus = document.getElementById("rt_status");
-  const startRtBtn = document.getElementById("start_rt");
-  const stopRtBtn = document.getElementById("stop_rt");
-  const rtErrorBox = document.getElementById("rt_error_box");
-  const rtCsvLink = document.getElementById("rt_csv_link");
+const videoElement = document.getElementById("input_video");
+const canvasElement = document.getElementById("output_canvas");
+const canvasCtx = canvasElement.getContext("2d");
+const csvBox = document.getElementById("csv_output");
+const downloadBtn = document.getElementById("downloadBtn");
 
-  let rtStream = null;
-  let rtInterval = null;
-  let runId = null; // unique per start/stop session
+// State
+let camera = null;
+let running = false;
+let startTime = 0;
+let fullCSV = "time, type, id, x, y, z\n";
 
-  function generateRunId() {
-    return Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
-  }
-
-  async function captureFrame(videoElem) {
-    if (!videoElem.videoWidth || !videoElem.videoHeight) {
-      return null;
-    }
-    const canvas = document.createElement("canvas");
-    canvas.width = videoElem.videoWidth;
-    canvas.height = videoElem.videoHeight;
-    const ctx = canvas.getContext("2d");
-    ctx.drawImage(videoElem, 0, 0);
-    const blob = await new Promise((resolve) =>
-      canvas.toBlob(resolve, "image/jpeg")
-    );
-    return blob;
-  }
-
-  startRtBtn.addEventListener("click", async function () {
-    rtErrorBox.style.display = "none";
-    rtErrorBox.textContent = "";
-    rtStatus.textContent = "Starting webcam...";
-    rtImage.style.display = "none";
-    rtCsvLink.style.display = "none";
-
-    runId = generateRunId();
-
-    try {
-      rtStream = await navigator.mediaDevices.getUserMedia({ video: true });
-      rtVideo.srcObject = rtStream; // hidden but used as capture source
-      rtStatus.textContent = "Webcam running. Processing at ~1 FPS...";
-    } catch (err) {
-      rtErrorBox.textContent = "Failed to access webcam: " + err;
-      rtErrorBox.style.display = "block";
-      rtStatus.textContent = "No webcam.";
-      return;
-    }
-
-    if (rtInterval) {
-      clearInterval(rtInterval);
-    }
-
-    rtInterval = setInterval(async () => {
-      const frameBlob = await captureFrame(rtVideo);
-      if (!frameBlob) {
-        return;
-      }
-
-      const fd = new FormData();
-      fd.append("frame", frameBlob, "frame.jpg");
-      fd.append("run_id", runId);
-
-      fetch("/api/hw7_pose_frame", {
-        method: "POST",
-        body: fd,
-      })
-        .then((r) => r.json())
-        .then((data) => {
-          if (!data.success) {
-            rtErrorBox.textContent = data.error || "Frame processing failed.";
-            rtErrorBox.style.display = "block";
-            rtStatus.textContent = "Error.";
-            rtImage.style.display = "none";
-            return;
-          }
-          rtErrorBox.style.display = "none";
-          rtErrorBox.textContent = "";
-          rtStatus.textContent = "Streaming (~1 FPS)...";
-
-          // update processed image only
-          rtImage.src = data.preview_image_url + "?t=" + Date.now();
-          rtImage.style.display = "block";
-
-          if (data.csv_url) {
-            rtCsvLink.href = data.csv_url;
-            rtCsvLink.style.display = "inline";
-          }
-        })
-        .catch((err) => {
-          rtErrorBox.textContent = "Request failed: " + err;
-          rtErrorBox.style.display = "block";
-          rtStatus.textContent = "Error.";
-          rtImage.style.display = "none";
-        });
-    }, 1000); // 1 frame per second
-  });
-
-  stopRtBtn.addEventListener("click", function () {
-    if (rtInterval) {
-      clearInterval(rtInterval);
-      rtInterval = null;
-    }
-    if (rtStream) {
-      rtStream.getTracks().forEach((t) => t.stop());
-      rtStream = null;
-    }
-    rtStatus.textContent = "Stopped.";
-    rtImage.style.display = "none";
-  });
+// Setup Holistic (POSE + HANDS)
+const holistic = new Holistic({
+  locateFile: (file) => "https://cdn.jsdelivr.net/npm/@mediapipe/holistic/" + file
 });
+
+holistic.setOptions({
+  modelComplexity: 1,
+  smoothLandmarks: true,
+  refineFaceLandmarks: false,
+  minDetectionConfidence: 0.5,
+  minTrackingConfidence: 0.5
+});
+
+holistic.onResults(onResults);
+
+// Start camera
+function startCamera() {
+  if (running) return;
+  running = true;
+  fullCSV = "time,type,id,x,y,z\n";
+  csvBox.value = "";
+
+  camera = new Camera(videoElement, {
+    onFrame: async () => {
+      if (running) await holistic.send({image: videoElement});
+    },
+    width: 640, height: 480
+  });
+
+  camera.start();
+  startTime = Date.now();
+}
+
+// Stop camera
+function stopCamera() {
+  running = false;
+  if (camera) {
+    camera.stop();
+    videoElement.srcObject?.getTracks().forEach(t => t.stop());
+  }
+  downloadBtn.style.display = "inline";
+}
+
+// CSV Download
+function downloadCSV() {
+  const blob = new Blob([fullCSV], {type: "text/csv"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "hw7_realtime_pose.csv";
+  a.click();
+}
+
+// Process results
+function onResults(results) {
+  if (!running) return;
+
+  canvasCtx.save();
+  canvasCtx.clearRect(0,0,canvasElement.width,canvasElement.height);
+  canvasCtx.drawImage(results.image,0,0,canvasElement.width,canvasElement.height);
+
+  const time = ((Date.now() - startTime)/1000).toFixed(3);
+
+  function logLandmarks(type, landmarks) {
+    if (!landmarks) return;
+    landmarks.forEach((lm, i) => {
+      fullCSV += `${time},${type},${i},${lm.x.toFixed(4)},${lm.y.toFixed(4)},${lm.z.toFixed(4)}\n`;
+    });
+  }
+
+  // Draw & log pose
+  drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, {color:"#00FF00"});
+  drawLandmarks(canvasCtx, results.poseLandmarks, {color:"#FF0000",radius:3});
+  logLandmarks("POSE", results.poseLandmarks);
+
+  // Draw & log hands
+  drawConnectors(canvasCtx, results.leftHandLandmarks, HAND_CONNECTIONS, {color:"#00AAFF"});
+  drawLandmarks(canvasCtx, results.leftHandLandmarks, {color:"#00AAFF",radius:3});
+  logLandmarks("LEFT_HAND", results.leftHandLandmarks);
+
+  drawConnectors(canvasCtx, results.rightHandLandmarks, HAND_CONNECTIONS, {color:"#FF8800"});
+  drawLandmarks(canvasCtx, results.rightHandLandmarks, {color:"#FF8800",radius:3});
+  logLandmarks("RIGHT_HAND", results.rightHandLandmarks);
+
+  canvasCtx.restore();
+
+  // Show only last frame
+  csvBox.value = "time,type,id,x,y,z\n" + fullCSV.split("\n").slice(-50).join("\n");
+}
 </script>
+
+</body>
+</html>

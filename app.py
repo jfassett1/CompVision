@@ -3,8 +3,6 @@ from flask import Flask, request, jsonify, render_template, url_for
 import numpy as np
 import cv2
 import base64
-from io import BytesIO
-from PIL import Image
 import uuid
 import os
 

@@ -6,7 +6,6 @@ from datetime import datetime
 
 import cv2
 import numpy as np
-import mediapipe as mp
 
 
 RESULTS_DIR = os.path.join("static", "results")
