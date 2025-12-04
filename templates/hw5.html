@@ -2,259 +2,105 @@
 {% include 'header.html' %}
 
 <div class="container">
-  <h1>HW5 – Real-Time Object Tracking</h1>
-  <p>Paper Link:</p> <href></href>
+  <h1>HW5 – Tracking (WebM Output)</h1>
 
   <div class="box">
-    <h2>Input</h2>
-    <p>Upload a video (for all trackers) and optionally an NPZ file (for SAM2-based tracking).</p>
+    <label>Video file:</label>
+    <input id="video_file" type="file" accept="video/*">
 
-    <div class="form-row">
-      <label for="video_file">Video file:</label>
-      <input id="video_file" type="file" name="video" accept="video/*">
-    </div>
+    <label>NPZ file (for SAM2):</label>
+    <input id="npz_file" type="file" accept=".npz">
 
-    <div class="form-row">
-      <label for="npz_file">SAM2 NPZ file (optional, required for SAM2 tracker):</label>
-      <input id="npz_file" type="file" name="npz" accept=".npz">
-    </div>
-
-    <div class="button-row">
-      <button type="button" id="run_marker_btn">Run marker-based tracker</button>
-      <button type="button" id="run_markerless_btn">Run marker-less tracker</button>
-      <button type="button" id="run_sam2_btn">Run SAM2 tracker</button>
-    </div>
+    <button id="btn_marker">Run Marker-Based (QR)</button>
+    <button id="btn_markerless">Run Marker-less</button>
+    <button id="btn_sam2">Run SAM2</button>
   </div>
 
   <div class="results-grid">
+
     <div class="box">
-      <h2>Marker-based tracking</h2>
-      <div class="preview">
-        <img id="marker_preview" alt="Marker-based tracking preview">
-      </div>
-      <div id="marker_gallery" class="gallery"></div>
-      <h3>Stats</h3>
-      <pre id="marker_stats"></pre>
+      <h2>Marker-Based Tracking</h2>
+      <video id="vid_marker" controls style="width:100%;"></video>
+      <pre id="stats_marker"></pre>
     </div>
 
     <div class="box">
-      <h2>Marker-less tracking</h2>
-      <div class="preview">
-        <img id="markerless_preview" alt="Marker-less tracking preview">
-      </div>
-      <div id="markerless_gallery" class="gallery"></div>
-      <h3>Stats</h3>
-      <pre id="markerless_stats"></pre>
+      <h2>Marker-Less Tracking</h2>
+      <video id="vid_markerless" controls style="width:100%;"></video>
+      <pre id="stats_markerless"></pre>
     </div>
 
     <div class="box">
-      <h2>SAM2-based tracking (NPZ)</h2>
-      <div class="preview">
-        <img id="sam2_preview" alt="SAM2 tracking preview">
-      </div>
-      <div id="sam2_gallery" class="gallery"></div>
-      <h3>Stats</h3>
-      <pre id="sam2_stats"></pre>
+      <h2>SAM2 Tracking</h2>
+      <video id="vid_sam2" controls style="width:100%;"></video>
+      <pre id="stats_sam2"></pre>
     </div>
+
   </div>
 </div>
 
 <style>
-  .container {
-    max-width: 1100px;
-    margin: 0 auto;
-    padding: 1rem;
-  }
-
-  .box {
-    border: 1px solid #ccc;
-    padding: 1rem;
-    margin-bottom: 1rem;
-    border-radius: 4px;
-    background: #fafafa;
-  }
-
-  .form-row {
-    margin-bottom: 0.75rem;
-  }
-
-  .form-row label {
-    display: block;
-    margin-bottom: 0.25rem;
-    font-weight: bold;
-  }
-
-  .button-row {
-    margin-top: 0.5rem;
-  }
-
-  .button-row button {
-    margin-right: 0.5rem;
-    padding: 0.4rem 0.8rem;
-    cursor: pointer;
-  }
-
+  .container { max-width: 1200px; margin:auto; padding:1rem; }
+  .box { border:1px solid #ccc; padding:1rem; margin-bottom:1rem; }
   .results-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: 1rem;
-  }
-
-  .preview {
-    text-align: center;
-    margin-bottom: 0.5rem;
-  }
-
-  .preview img {
-    max-width: 100%;
-    max-height: 260px;
-    border: 1px solid #ddd;
-  }
-
-  .gallery {
-    display: flex;
-    flex-wrap: wrap;
-    margin-bottom: 0.5rem;
-  }
-
-  .gallery img {
-    width: 100px;
-    height: auto;
-    margin: 2px;
-    border: 1px solid #ddd;
-  }
-
-  pre {
-    background: #f0f0f0;
-    padding: 0.5rem;
-    overflow-x: auto;
-    max-height: 200px;
+    display:grid;
+    grid-template-columns:repeat(auto-fit, minmax(300px,1fr));
+    gap:1rem;
   }
 </style>
 
 <script>
-  document.addEventListener("DOMContentLoaded", function () {
-    const videoInput = document.getElementById("video_file");
-    const npzInput = document.getElementById("npz_file");
+function collectData(requireNPZ=false) {
+    let fd = new FormData();
+    let vid = document.getElementById("video_file").files[0];
+    if (!vid) { alert("Upload video first"); return null; }
+    fd.append("video", vid);
 
-    const markerPreview = document.getElementById("marker_preview");
-    const markerGallery = document.getElementById("marker_gallery");
-    const markerStats = document.getElementById("marker_stats");
-
-    const markerlessPreview = document.getElementById("markerless_preview");
-    const markerlessGallery = document.getElementById("markerless_gallery");
-    const markerlessStats = document.getElementById("markerless_stats");
-
-    const sam2Preview = document.getElementById("sam2_preview");
-    const sam2Gallery = document.getElementById("sam2_gallery");
-    const sam2Stats = document.getElementById("sam2_stats");
-
-    function buildFormData(includeNpz) {
-      const fd = new FormData();
-      if (!videoInput.files || videoInput.files.length === 0) {
-        alert("Please upload a video file first.");
-        return null;
-      }
-      fd.append("video", videoInput.files[0]);
-
-      if (includeNpz) {
-        if (!npzInput.files || npzInput.files.length === 0) {
-          alert("For SAM2 tracking, please upload an NPZ file.");
-          return null;
-        }
-        fd.append("npz", npzInput.files[0]);
-      }
-
-      return fd;
+    if (requireNPZ) {
+        let npz = document.getElementById("npz_file").files[0];
+        if (!npz) { alert("Upload NPZ first"); return null; }
+        fd.append("npz", npz);
     }
+    return fd;
+}
 
-    function updateResult(previewImg, galleryDiv, statsPre, data) {
-      if (!data || !data.success) {
-        const errMsg = data && data.error ? data.error : "Unknown error.";
-        statsPre.textContent = "Error: " + errMsg;
-        galleryDiv.innerHTML = "";
-        if (previewImg) {
-          previewImg.src = "";
-        }
+function updateUI(videoElem, statsElem, data) {
+    if (!data.success) {
+        statsElem.textContent = "Error: " + data.error;
+        videoElem.src = "";
         return;
-      }
-
-      const frames = data.frames || [];
-      if (previewImg && frames.length > 0) {
-        // Cache-bust query param to avoid stale images
-        previewImg.src = frames[0] + "?t=" + Date.now();
-      }
-
-      galleryDiv.innerHTML = "";
-      frames.slice(0, 6).forEach(function (url) {
-        const img = document.createElement("img");
-        img.src = url + "?t=" + Date.now();
-        galleryDiv.appendChild(img);
-      });
-
-      statsPre.textContent = JSON.stringify(data.stats || {}, null, 2);
     }
+    videoElem.src = data.video + "?t=" + Date.now();
+    statsElem.textContent = JSON.stringify(data.stats, null, 2);
+}
 
-    document
-      .getElementById("run_marker_btn")
-      .addEventListener("click", function () {
-        const fd = buildFormData(false);
-        if (!fd) return;
+document.getElementById("btn_marker").onclick = () => {
+    let fd = collectData(false); if (!fd) return;
+    fetch("/api/hw5_marker", {method:"POST", body:fd})
+    .then(r=>r.json())
+    .then(data => updateUI(
+        document.getElementById("vid_marker"),
+        document.getElementById("stats_marker"),
+        data));
+};
 
-        fetch("/api/hw5_marker", {
-          method: "POST",
-          body: fd,
-        })
-          .then((res) => res.json())
-          .then((data) => {
-            updateResult(markerPreview, markerGallery, markerStats, data);
-          })
-          .catch((err) => {
-            markerStats.textContent = "Error: " + err;
-          });
-      });
+document.getElementById("btn_markerless").onclick = () => {
+    let fd = collectData(false); if (!fd) return;
+    fetch("/api/hw5_markerless", {method:"POST", body:fd})
+    .then(r=>r.json())
+    .then(data => updateUI(
+        document.getElementById("vid_markerless"),
+        document.getElementById("stats_markerless"),
+        data));
+};
 
-    document
-      .getElementById("run_markerless_btn")
-      .addEventListener("click", function () {
-        const fd = buildFormData(false);
-        if (!fd) return;
-
-        fetch("/api/hw5_markerless", {
-          method: "POST",
-          body: fd,
-        })
-          .then((res) => res.json())
-          .then((data) => {
-            updateResult(
-              markerlessPreview,
-              markerlessGallery,
-              markerlessStats,
-              data
-            );
-          })
-          .catch((err) => {
-            markerlessStats.textContent = "Error: " + err;
-          });
-      });
-
-    document
-      .getElementById("run_sam2_btn")
-      .addEventListener("click", function () {
-        const fd = buildFormData(true);
-        if (!fd) return;
-
-        fetch("/api/hw5_sam2", {
-          method: "POST",
-          body: fd,
-        })
-          .then((res) => res.json())
-          .then((data) => {
-            updateResult(sam2Preview, sam2Gallery, sam2Stats, data);
-          })
-          .catch((err) => {
-            sam2Stats.textContent = "Error: " + err;
-          });
-      });
-  });
+document.getElementById("btn_sam2").onclick = () => {
+    let fd = collectData(true); if (!fd) return;
+    fetch("/api/hw5_sam2", {method:"POST", body:fd})
+    .then(r=>r.json())
+    .then(data => updateUI(
+        document.getElementById("vid_sam2"),
+        document.getElementById("stats_sam2"),
+        data));
+};
 </script>

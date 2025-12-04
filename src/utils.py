@@ -1,8 +1,8 @@
 import numpy as np
 import cv2
 
-fx, fy = 800, 800
-cx, cy = 640, 360
+fx, fy = 1872.9844024046715, 958.1184951213671
+cx, cy = 1869.1125345607425, 543.8823586167894
 
 K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float32)
 

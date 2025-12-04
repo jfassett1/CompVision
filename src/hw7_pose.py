@@ -198,3 +198,73 @@ def save_pose_csv(keypoint_sequence, csv_prefix="hw7_pose"):
                     )
 
     return filename
+
+
+def append_pose_csv_stream(run_id, keypoint_sequence, csv_prefix="hw7_rt"):
+    """
+    Append keypoints for a real-time stream to a CSV file.
+
+    run_id: string identifying this real-time session (from the frontend)
+    keypoint_sequence: list of frame dicts, same structure as process_pose_video output
+                       (for the realtime endpoint it's typically a single-frame list)
+    """
+    _ensure_results_dir()
+
+    csv_filename = f"{csv_prefix}_{run_id}.csv"
+    csv_path = os.path.join(RESULTS_DIR, csv_filename)
+
+    fieldnames = [
+        "frame_index",
+        "joint_group",
+        "joint_side",
+        "joint_name",
+        "x",
+        "y",
+        "z",
+        "confidence",
+    ]
+
+    file_exists = os.path.exists(csv_path)
+
+    with open(csv_path, "a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        if not file_exists:
+            writer.writeheader()
+
+        for fdata in keypoint_sequence:
+            fi = fdata["frame_index"]
+
+            # Pose
+            for name, vals in fdata["pose"].items():
+                x, y, z, c = vals
+                writer.writerow(
+                    {
+                        "frame_index": fi,
+                        "joint_group": "pose",
+                        "joint_side": "",
+                        "joint_name": name,
+                        "x": x,
+                        "y": y,
+                        "z": z,
+                        "confidence": c,
+                    }
+                )
+
+            # Hands
+            for side in ["left", "right"]:
+                for name, vals in fdata["hands"][side].items():
+                    x, y, z, c = vals
+                    writer.writerow(
+                        {
+                            "frame_index": fi,
+                            "joint_group": "hand",
+                            "joint_side": side,
+                            "joint_name": name,
+                            "x": x,
+                            "y": y,
+                            "z": z,
+                            "confidence": c,
+                        }
+                    )
+
+    return csv_filename

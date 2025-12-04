@@ -1,48 +1,393 @@
 
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>HW3 Image Processing</title>
+{% include 'header.html' %}
+
+<div class="container">
+  <h1>HW3: Gradients, LoG, Edges, Corners, and ArUco Segmentation</h1>
+
   <style>
-    body { font-family: sans-serif; margin: 20px; background: #111; color: #eee; }
-    canvas, img { width: 300px; height: auto; margin: 5px; border: 1px solid #333; }
-    #preview-area { display: flex; flex-wrap: wrap; }
+    .box {
+      border: 1px solid #ccc;
+      padding: 12px;
+      margin-bottom: 16px;
+      border-radius: 4px;
+    }
+    .box h2 {
+      margin-top: 0;
+      font-size: 1.1rem;
+    }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .panel {
+      border: 1px solid #eee;
+      padding: 6px;
+      margin: 4px;
+      flex: 1 1 250px;
+    }
+    .panel h3 {
+      margin: 4px 0;
+      font-size: 0.95rem;
+    }
+    img.result-img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      margin-bottom: 4px;
+    }
+    .status {
+      font-size: 0.9rem;
+      color: #555;
+      margin-top: 4px;
+    }
+    table {
+      border-collapse: collapse;
+      margin-top: 8px;
+    }
+    table th, table td {
+      border: 1px solid #ccc;
+      padding: 4px 6px;
+      font-size: 0.9rem;
+    }
+    pre {
+      background: #f7f7f7;
+      padding: 8px;
+      font-size: 0.85rem;
+      overflow-x: auto;
+    }
   </style>
-</head>
-{% include "header.html" %}
-<body>
-  <h2>HW3 — Gradient and LoG Visualization</h2>
-  <input type="file" id="imageInput" accept="image/*">
-  <button id="processBtn">Process</button>
-  <div id="preview-area">
-    <img id="orig" alt="Original">
-    <img id="gradmag" alt="Gradient Magnitude">
-    <img id="gradang" alt="Gradient Angle">
-    <img id="log" alt="Laplacian of Gaussian">
+
+  <!-- 1. Gradients + LoG -->
+  <div class="box">
+    <h2>1. Gradient Magnitude/Angle and Laplacian of Gaussian</h2>   
+    <a href="https://drive.google.com/file/d/1T58GA9I03svcJ1ymu65JKHojt3qbD_Cm/view?usp=sharing">Video</a>
+    <p>Upload a set of images to compute gradient magnitude, gradient angle, and Laplacian of Gaussian (LoG) visualizations.</p>
+    <input type="file" id="grad_images" multiple accept="image/*">
+    <button id="run_grad_log">Compute Gradients &amp; LoG</button>
+    <div id="grad_log_status" class="status"></div>
+    <div id="grad_log_results" class="row"></div>
   </div>
 
-  <script>
-    const input = document.getElementById('imageInput');
-    const orig = document.getElementById('orig');
-    const btn = document.getElementById('processBtn');
+  <!-- 2. Edge and Corner Keypoints -->
+  <div class="box">
+    <h2>2. Edge and Corner Keypoints</h2>
+    <p>Upload a single image to detect significant edge and corner keypoints.</p>
+    <input type="file" id="edge_corner_image" accept="image/*">
+    <button id="run_edge_corner">Detect Edge &amp; Corner Keypoints</button>
+    <div id="edge_corner_status" class="status"></div>
+    <div class="row">
+      <div class="panel">
+        <h3>Edge Keypoints Overlay</h3>
+        <img id="edge_overlay_img" class="result-img" alt="">
+      </div>
+      <div class="panel">
+        <h3>Corner Keypoints Overlay</h3>
+        <img id="corner_overlay_img" class="result-img" alt="">
+      </div>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Count</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Edges</td>
+          <td id="edge_count_cell">-</td>
+        </tr>
+        <tr>
+          <td>Corners</td>
+          <td id="corner_count_cell">-</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
 
-    input.addEventListener('change', e => {
-      const file = e.target.files[0];
-      if (file) orig.src = URL.createObjectURL(file);
-    });
+  <!-- 3. Exact Object Boundary -->
+  <div class="box">
+    <h2>3. Exact Object Boundary</h2>
+    <p>Upload an image to find and visualize the exact boundary of the main object.</p>
+    <input type="file" id="boundary_image" accept="image/*">
+    <button id="run_boundary">Find Object Boundary</button>
+    <div id="boundary_status" class="status"></div>
+    <div class="row">
+      <div class="panel">
+        <h3>Boundary Overlay</h3>
+        <img id="boundary_overlay_img" class="result-img" alt="">
+      </div>
+      <div class="panel">
+        <h3>Binary Mask (Optional)</h3>
+        <img id="boundary_mask_img" class="result-img" alt="">
+      </div>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Metric</th>
+          <th>Value</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Area (pixels)</td>
+          <td id="boundary_area_cell">-</td>
+        </tr>
+        <tr>
+          <td>Perimeter (pixels)</td>
+          <td id="boundary_perimeter_cell">-</td>
+        </tr>
+        <tr>
+          <td>Bounding Box [x, y, w, h]</td>
+          <td id="boundary_bbox_cell">-</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
 
-    btn.addEventListener('click', async () => {
-      const file = input.files[0];
-      if (!file) return alert("Upload an image first");
-      const formData = new FormData();
-      formData.append("image", file);
-      const res = await fetch("/hw3/process", { method: "POST", body: formData });
-      const data = await res.json();
-      document.getElementById("gradmag").src = "data:image/png;base64," + data.grad_mag;
-      document.getElementById("gradang").src = "data:image/png;base64," + data.grad_ang;
-      document.getElementById("log").src = "data:image/png;base64," + data.log;
-    });
-  </script>
-</body>
-</html>
+  <!-- 4. ArUco-based Non-Rectangular Object Segmentation -->
+  <div class="box">
+    <h2>4. Non-Rectangular Object Segmentation with ArUco Markers</h2>
+    <p>Upload a sequence of images (at least 10) where a non-rectangular object boundary is marked with ArUco markers.</p>
+    <input type="file" id="aruco_images" multiple accept="image/*">
+    <button id="run_aruco_seg">Run ArUco Segmentation</button>
+    <div id="aruco_status" class="status"></div>
+    <div id="aruco_results" class="row"></div>
+    <h3>Summary</h3>
+    <pre id="aruco_summary"></pre>
+  </div>
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  // 1. Gradient + LoG
+  const gradBtn = document.getElementById("run_grad_log");
+  const gradInput = document.getElementById("grad_images");
+  const gradStatus = document.getElementById("grad_log_status");
+  const gradResults = document.getElementById("grad_log_results");
+
+  gradBtn.addEventListener("click", function () {
+    const files = gradInput.files;
+    if (!files || files.length === 0) {
+      gradStatus.textContent = "No images selected.";
+      return;
+    }
+    const formData = new FormData();
+    for (let i = 0; i < files.length; i++) {
+      formData.append("images", files[i]);
+    }
+    gradStatus.textContent = "Processing...";
+    gradResults.innerHTML = "";
+
+    fetch("/api/hw3_grad_log", {
+      method: "POST",
+      body: formData
+    })
+      .then(resp => resp.json())
+      .then(data => {
+        if (!data || !data.results) {
+          gradStatus.textContent = "Error: malformed response.";
+          return;
+        }
+        gradStatus.textContent = "Done.";
+        gradResults.innerHTML = "";
+        data.results.forEach((item, idx) => {
+          const panel = document.createElement("div");
+          panel.className = "panel";
+          const title = document.createElement("h3");
+          title.textContent = "Image " + idx;
+          panel.appendChild(title);
+
+          const magImg = document.createElement("img");
+          magImg.className = "result-img";
+          magImg.src = item.grad_mag_url;
+          magImg.alt = "Gradient Magnitude";
+
+          const angImg = document.createElement("img");
+          angImg.className = "result-img";
+          angImg.src = item.grad_angle_url;
+          angImg.alt = "Gradient Angle";
+
+          const logImg = document.createElement("img");
+          logImg.className = "result-img";
+          logImg.src = item.log_url;
+          logImg.alt = "LoG";
+
+          const magLabel = document.createElement("div");
+          magLabel.textContent = "Gradient Magnitude";
+
+          const angLabel = document.createElement("div");
+          angLabel.textContent = "Gradient Angle";
+
+          const logLabel = document.createElement("div");
+          logLabel.textContent = "LoG";
+
+          const statsDiv = document.createElement("div");
+          statsDiv.className = "status";
+          statsDiv.textContent = "Mean gradient magnitude: " + item.mean_grad_mag.toFixed(2);
+
+          panel.appendChild(magLabel);
+          panel.appendChild(magImg);
+          panel.appendChild(angLabel);
+          panel.appendChild(angImg);
+          panel.appendChild(logLabel);
+          panel.appendChild(logImg);
+          panel.appendChild(statsDiv);
+
+          gradResults.appendChild(panel);
+        });
+      })
+      .catch(err => {
+        console.error(err);
+        gradStatus.textContent = "Error: " + err;
+      });
+  });
+
+  // 2. Edge and Corner Keypoints
+  const edgeBtn = document.getElementById("run_edge_corner");
+  const edgeInput = document.getElementById("edge_corner_image");
+  const edgeStatus = document.getElementById("edge_corner_status");
+  const edgeOverlayImg = document.getElementById("edge_overlay_img");
+  const cornerOverlayImg = document.getElementById("corner_overlay_img");
+  const edgeCountCell = document.getElementById("edge_count_cell");
+  const cornerCountCell = document.getElementById("corner_count_cell");
+
+  edgeBtn.addEventListener("click", function () {
+    const file = edgeInput.files[0];
+    if (!file) {
+      edgeStatus.textContent = "No image selected.";
+      return;
+    }
+    const formData = new FormData();
+    formData.append("image", file);
+    edgeStatus.textContent = "Processing...";
+
+    fetch("/api/hw3_edge_corner", {
+      method: "POST",
+      body: formData
+    })
+      .then(resp => resp.json())
+      .then(data => {
+        if (!data) {
+          edgeStatus.textContent = "Error: malformed response.";
+          return;
+        }
+        edgeStatus.textContent = "Done.";
+        edgeOverlayImg.src = data.edge_overlay_url;
+        cornerOverlayImg.src = data.corner_overlay_url;
+        edgeCountCell.textContent = data.edge_count;
+        cornerCountCell.textContent = data.corner_count;
+      })
+      .catch(err => {
+        console.error(err);
+        edgeStatus.textContent = "Error: " + err;
+      });
+  });
+
+  // 3. Exact Object Boundary
+  const boundaryBtn = document.getElementById("run_boundary");
+  const boundaryInput = document.getElementById("boundary_image");
+  const boundaryStatus = document.getElementById("boundary_status");
+  const boundaryOverlayImg = document.getElementById("boundary_overlay_img");
+  const boundaryMaskImg = document.getElementById("boundary_mask_img");
+  const boundaryAreaCell = document.getElementById("boundary_area_cell");
+  const boundaryPerimeterCell = document.getElementById("boundary_perimeter_cell");
+  const boundaryBboxCell = document.getElementById("boundary_bbox_cell");
+
+  boundaryBtn.addEventListener("click", function () {
+    const file = boundaryInput.files[0];
+    if (!file) {
+      boundaryStatus.textContent = "No image selected.";
+      return;
+    }
+    const formData = new FormData();
+    formData.append("image", file);
+    boundaryStatus.textContent = "Processing...";
+
+    fetch("/api/hw3_boundary", {
+      method: "POST",
+      body: formData
+    })
+      .then(resp => resp.json())
+      .then(data => {
+        if (!data) {
+          boundaryStatus.textContent = "Error: malformed response.";
+          return;
+        }
+        boundaryStatus.textContent = "Done.";
+        boundaryOverlayImg.src = data.boundary_overlay_url || "";
+        if (data.mask_url) {
+          boundaryMaskImg.src = data.mask_url;
+        } else {
+          boundaryMaskImg.removeAttribute("src");
+        }
+        boundaryAreaCell.textContent = data.area != null ? data.area.toFixed(2) : "-";
+        boundaryPerimeterCell.textContent = data.perimeter != null ? data.perimeter.toFixed(2) : "-";
+        boundaryBboxCell.textContent = data.bbox ? JSON.stringify(data.bbox) : "-";
+      })
+      .catch(err => {
+        console.error(err);
+        boundaryStatus.textContent = "Error: " + err;
+      });
+  });
+
+  // 4. ArUco Segmentation
+  const arucoBtn = document.getElementById("run_aruco_seg");
+  const arucoInput = document.getElementById("aruco_images");
+  const arucoStatus = document.getElementById("aruco_status");
+  const arucoResults = document.getElementById("aruco_results");
+  const arucoSummary = document.getElementById("aruco_summary");
+
+  arucoBtn.addEventListener("click", function () {
+    const files = arucoInput.files;
+    if (!files || files.length === 0) {
+      arucoStatus.textContent = "No images selected.";
+      return;
+    }
+    const formData = new FormData();
+    for (let i = 0; i < files.length; i++) {
+      formData.append("images", files[i]);
+    }
+    arucoStatus.textContent = "Processing...";
+    arucoResults.innerHTML = "";
+    arucoSummary.textContent = "";
+
+    fetch("/api/hw3_aruco_seg", {
+      method: "POST",
+      body: formData
+    })
+      .then(resp => resp.json())
+      .then(data => {
+        if (!data) {
+          arucoStatus.textContent = "Error: malformed response.";
+          return;
+        }
+        arucoStatus.textContent = "Done.";
+        arucoResults.innerHTML = "";
+
+        const overlays = data.overlay_urls || [];
+        overlays.forEach((url, idx) => {
+          const panel = document.createElement("div");
+          panel.className = "panel";
+          const title = document.createElement("h3");
+          title.textContent = "Frame " + idx;
+          const img = document.createElement("img");
+          img.className = "result-img";
+          img.src = url;
+          img.alt = "ArUco segmented overlay";
+          panel.appendChild(title);
+          panel.appendChild(img);
+          arucoResults.appendChild(panel);
+        });
+
+        arucoSummary.textContent = JSON.stringify(data.summary, null, 2);
+      })
+      .catch(err => {
+        console.error(err);
+        arucoStatus.textContent = "Error: " + err;
+      });
+  });
+});
+</script>

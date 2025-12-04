@@ -1,105 +1,267 @@
 
 {% include 'header.html' %}
 
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>HW2 – Template Matching</title>
-    <style>
-        body { font-family: sans-serif; margin: 20px; }
-        .box { border: 1px solid #ccc; padding: 10px; margin-top: 20px; }
-        img { max-width: 100%; }
-        table { border-collapse: collapse; width: 100%; margin-top: 10px; }
-        th, td { border: 1px solid #ccc; padding: 6px; }
-    </style>
-</head>
-<body>
+<div class="container" style="max-width: 1000px; margin: 0 auto; padding: 20px;">
+  <h1>HW2: Template Matching and Fourier Deblur</h1>
 
-<h2>HW2: Object Detection via Template Matching (Correlation)</h2>
+  <!-- ============================= -->
+  <!-- 1. TEMPLATE MATCHING SECTION -->
+  <!-- ============================= -->
+    <a href="https://drive.google.com/file/d/1ilXcyfpkZBP1TGd0wKGxIVbF8Aw5coRP/view?usp=sharing">Video</a>
+  <div class="box" style="border: 1px solid #ccc; padding: 15px; margin-bottom: 20px;">
+    <h2>Template Matching with Correlation</h2>
+  <h3>Generated Template Database (10 Templates)</h3>
+  <div id="template_preview" style="display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 15px;">
+    Loading templates...
+  </div>
+    <p>Upload a scene image. The backend will search a local database of object templates and blur detected regions.</p>
 
-<div class="box">
-    <form id="form">
-        <label>Scene Image:</label><br>
-        <input type="file" id="scene" accept="image/*" required><br><br>
+    <div style="margin-bottom: 10px;">
+      <label for="scene">Scene image:</label>
+      <input type="file" id="scene" accept="image/*">
+    </div>
 
-        <label>Threshold (0–1):</label><br>
-        <input type="number" id="threshold" step="0.01" min="0" max="1" placeholder="0.8"><br><br>
+    <div style="margin-bottom: 10px;">
+      <label for="threshold">Match threshold (0–1):</label>
+      <input type="number" id="threshold" min="0" max="1" step="0.01" placeholder="0.8" style="width: 80px;">
 
-        <label>Max Matches:</label><br>
-        <input type="number" id="max_matches" min="1" placeholder="5"><br><br>
+      <label for="max_matches" style="margin-left: 15px;">Max matches:</label>
+      <input type="number" id="max_matches" min="1" placeholder="5" style="width: 80px;">
+    </div>
 
-        <button type="submit">Run Detection</button>
-    </form>
+    <button id="run_template_match">Run Template Matching</button>
 
-    <p id="status"></p>
-</div>
+    <div id="tm_status" style="margin-top: 10px; font-weight: bold;"></div>
 
-<div class="box">
-    <h3>Result</h3>
-    <div id="result">No image yet.</div>
-</div>
+    <h3>Processed Scene (Blurred Regions)</h3>
+    <div id="tm_result">No result yet.</div>
 
-<div class="box">
     <h3>Matches</h3>
-    <div id="matches">None</div>
+    <div id="tm_matches">No matches yet.</div>
+  </div>
+
+  <!-- ================================ -->
+  <!-- 2. FOURIER BLUR/DEBLUR SECTION -->
+  <!-- ================================ -->
+  <div class="box" style="border: 1px solid #ccc; padding: 15px; margin-bottom: 20px;">
+    <h2>Gaussian Blur and Fourier Deblurring</h2>
+    <p>Upload an image L. The system will blur it with a Gaussian filter (L_b) and then attempt to recover L via Fourier-domain deconvolution.</p>
+
+    <div style="margin-bottom: 10px;">
+      <label for="fourier_image">Input image L:</label>
+      <input type="file" id="fourier_image" accept="image/*">
+    </div>
+
+    <div style="margin-bottom: 10px;">
+      <label for="sigma">Gaussian sigma:</label>
+      <input type="number" id="sigma" step="0.1" placeholder="2.0" style="width: 80px;">
+      <span style="margin-left: 10px; font-size: 0.9em;">(Kernel size is chosen automatically from sigma.)</span>
+    </div>
+
+    <button id="run_fourier">Run Gaussian Blur &amp; Fourier Deblur</button>
+
+    <div id="fourier_status" style="margin-top: 10px; font-weight: bold;"></div>
+
+    <div id="fourier_results" style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px;">
+      <div id="img_original" style="flex: 1 1 30%;">Original: none</div>
+      <div id="img_blurred" style="flex: 1 1 30%;">Blurred: none</div>
+      <div id="img_recovered" style="flex: 1 1 30%;">Recovered: none</div>
+    </div>
+  </div>
 </div>
 
 <script>
-document.getElementById("form").addEventListener("submit", async function(e) {
-    e.preventDefault();
+document.addEventListener("DOMContentLoaded", function () {
+  // ============================
+  // TEMPLATE MATCHING HANDLERS
+  // ============================
+  const tmButton = document.getElementById("run_template_match");
+  const tmStatus = document.getElementById("tm_status");
+  const tmResult = document.getElementById("tm_result");
+  const tmMatches = document.getElementById("tm_matches");
 
-    const fd = new FormData();
-    const scene = document.getElementById("scene").files[0];
-    if (!scene) {
-        document.getElementById("status").textContent = "Select an image.";
-        return;
+  tmButton.addEventListener("click", async function () {
+    const sceneInput = document.getElementById("scene");
+    const thresholdInput = document.getElementById("threshold");
+    const maxMatchesInput = document.getElementById("max_matches");
+
+    if (!sceneInput.files || sceneInput.files.length === 0) {
+      tmStatus.textContent = "Please upload a scene image.";
+      return;
     }
 
-    fd.append("scene", scene);
+    const formData = new FormData();
+    formData.append("scene", sceneInput.files[0]);
 
-    const threshold = document.getElementById("threshold").value;
-    const maxm = document.getElementById("max_matches").value;
-
-    if (threshold) fd.append("threshold", threshold);
-    if (maxm) fd.append("max_matches", maxm);
-
-    document.getElementById("status").textContent = "Processing...";
-
-    let resp = await fetch("/api/match_templates", { method: "POST", body: fd });
-    let data = await resp.json();
-
-    if (!data.success) {
-        document.getElementById("status").textContent = "Error: " + data.message;
-        return;
+    if (thresholdInput.value !== "") {
+      formData.append("threshold", thresholdInput.value);
+    }
+    if (maxMatchesInput.value !== "") {
+      formData.append("max_matches", maxMatchesInput.value);
     }
 
-    document.getElementById("status").textContent = "Done.";
+    tmStatus.textContent = "Running template matching...";
+    tmResult.textContent = "";
+    tmMatches.textContent = "";
 
-    // show output image
-    document.getElementById("result").innerHTML =
-        `<img src="${data.processed_image_url}?t=${Date.now()}">`;
+    try {
+      const response = await fetch("/api/hw2_match_templates", {
+        method: "POST",
+        body: formData
+      });
 
-    // matches table
-    if (data.matches.length === 0) {
-        document.getElementById("matches").textContent = "No matches.";
+      const data = await response.json();
+      if (!data.success) {
+        tmStatus.textContent = data.message || "Template matching failed.";
+        tmResult.textContent = "";
+        tmMatches.textContent = "No matches.";
         return;
-    }
+      }
 
-    let html = "<table><tr><th>Name</th><th>Score</th><th>Top-left</th><th>Bottom-right</th></tr>";
-    data.matches.forEach(m => {
-        html += `<tr>
+      tmStatus.textContent = data.message || "Template matching completed.";
+
+      if (data.processed_image_url) {
+        const imgHtml = `<img src="${data.processed_image_url}?t=${Date.now()}" style="max-width: 100%; height: auto;">`;
+        tmResult.innerHTML = imgHtml;
+      } else {
+        tmResult.textContent = "No processed image available.";
+      }
+
+      const matches = data.matches || [];
+      if (matches.length === 0) {
+        tmMatches.textContent = "No matches above threshold.";
+      } else {
+        let tableHtml = "<table border='1' cellspacing='0' cellpadding='4'><tr><th>Template</th><th>Score</th><th>Top-left (x,y)</th><th>Bottom-right (x,y)</th></tr>";
+        for (const m of matches) {
+          tableHtml += `<tr>
             <td>${m.template_name}</td>
-            <td>${m.score.toFixed(3)}</td>
-            <td>(${m.top_left[0]}, ${m.top_left[1]})</td>
-            <td>(${m.bottom_right[0]}, ${m.bottom_right[1]})</td>
-        </tr>`;
-    });
-    html += "</table>";
+            <td>${m.score.toFixed ? m.score.toFixed(3) : m.score}</td>
+            <td>[${m.top_left[0]}, ${m.top_left[1]}]</td>
+            <td>[${m.bottom_right[0]}, ${m.bottom_right[1]}]</td>
+          </tr>`;
+        }
+        tableHtml += "</table>";
+        tmMatches.innerHTML = tableHtml;
+      }
+    } catch (err) {
+      console.error(err);
+      tmStatus.textContent = "Error during template matching.";
+      tmResult.textContent = "";
+      tmMatches.textContent = "No matches.";
+    }
+  });
 
-    document.getElementById("matches").innerHTML = html;
+  // ============================
+  // FOURIER BLUR/DEBLUR HANDLERS
+  // ============================
+  const fourierButton = document.getElementById("run_fourier");
+  const fourierStatus = document.getElementById("fourier_status");
+  const imgOriginal = document.getElementById("img_original");
+  const imgBlurred = document.getElementById("img_blurred");
+  const imgRecovered = document.getElementById("img_recovered");
+
+  fourierButton.addEventListener("click", async function () {
+    const imgInput = document.getElementById("fourier_image");
+    const sigmaInput = document.getElementById("sigma");
+
+    if (!imgInput.files || imgInput.files.length === 0) {
+      fourierStatus.textContent = "Please upload an image L.";
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("image", imgInput.files[0]);
+
+    if (sigmaInput.value !== "") {
+      formData.append("sigma", sigmaInput.value);
+    }
+
+    fourierStatus.textContent = "Running Gaussian blur and Fourier deblur...";
+    imgOriginal.textContent = "Original: processing...";
+    imgBlurred.textContent = "Blurred: processing...";
+    imgRecovered.textContent = "Recovered: processing...";
+
+    try {
+      const response = await fetch("/api/hw2_fourier_deblur", {
+        method: "POST",
+        body: formData
+      });
+
+      const data = await response.json();
+      if (!data.success) {
+        fourierStatus.textContent = data.message || "Fourier deblur failed.";
+        imgOriginal.textContent = "Original: none";
+        imgBlurred.textContent = "Blurred: none";
+        imgRecovered.textContent = "Recovered: none";
+        return;
+      }
+
+      fourierStatus.textContent = data.message || "Fourier blur/deblur completed.";
+
+      if (data.original_url) {
+        imgOriginal.innerHTML = `<div>Original L:</div><img src="${data.original_url}?t=${Date.now()}" style="max-width: 100%; height: auto;">`;
+      } else {
+        imgOriginal.textContent = "Original: none";
+      }
+
+      if (data.blurred_url) {
+        imgBlurred.innerHTML = `<div>Blurred L_b:</div><img src="${data.blurred_url}?t=${Date.now()}" style="max-width: 100%; height: auto;">`;
+      } else {
+        imgBlurred.textContent = "Blurred: none";
+      }
+
+      if (data.recovered_url) {
+        imgRecovered.innerHTML = `<div>Recovered L_hat:</div><img src="${data.recovered_url}?t=${Date.now()}" style="max-width: 100%; height: auto;">`;
+      } else {
+        imgRecovered.textContent = "Recovered: none";
+      }
+    } catch (err) {
+      console.error(err);
+      fourierStatus.textContent = "Error during Fourier blur/deblur.";
+      imgOriginal.textContent = "Original: none";
+      imgBlurred.textContent = "Blurred: none";
+      imgRecovered.textContent = "Recovered: none";
+    }
+  });
 });
-</script>
 
-</body>
-</html>
+// ============================
+// LOAD GENERATED TEMPLATES
+// ============================
+async function loadTemplatePreview() {
+  const container = document.getElementById("template_preview");
+
+  try {
+    // Backend always stores templates here
+    const resp = await fetch("/static/results/hw2_generated_templates/");
+    const text = await resp.text();
+
+    // Extract filenames using a simple regex
+    const matches = [...text.matchAll(/href="([^"]+\.png)"/g)].map(m => m[1]);
+
+    if (matches.length === 0) {
+      container.textContent = "No templates found.";
+      return;
+    }
+
+    container.innerHTML = "";
+
+    matches.forEach(file => {
+      const imgUrl = "/static/results/hw2_generated_templates/" + file;
+      const div = document.createElement("div");
+      div.style = "width: 100px; text-align: center; font-size: 12px;";
+      div.innerHTML = `
+          <img src="${imgUrl}?t=${Date.now()}" style="width:100%; border:1px solid #ccc;">
+          <div>${file.replace('.png','')}</div>
+      `;
+      container.appendChild(div);
+    });
+
+  } catch (err) {
+    container.textContent = "Failed to load template previews.";
+    console.error(err);
+  }
+}
+
+loadTemplatePreview();
+</script>

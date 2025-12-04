@@ -1,0 +1,250 @@
+
+{% include 'header.html' %}
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>HW1 – Real-World Dimension Estimation</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        .box {
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin-top: 20px;
+        }
+        #image_container {
+            margin-top: 10px;
+            text-align: center;
+        }
+        #image_container img {
+            max-width: 100%;
+            height: auto;
+            cursor: crosshair;
+        }
+        #overlay_image img {
+            max-width: 100%;
+            height: auto;
+        }
+        label {
+            display: inline-block;
+            margin-top: 5px;
+        }
+        input[type="number"] {
+            width: 150px;
+            margin-left: 5px;
+        }
+        #status, #distance_result, #click_info, #selected_points {
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+
+    <a href="https://drive.google.com/drive/folders/1HlmgrfdmVAlXLHdlbopogLkTsQwxGMGi?usp=sharing">Videos</a>
+<div class="box">
+    <h2>HW1: Real-World Dimension from Single Image</h2>
+    <p>
+        Upload an image of an object, click two points that correspond to an edge on the object,
+        enter the known camera-to-object distance, and the system will predict the real-world
+        length of that edge using the calibrated camera intrinsics.
+    </p>
+</div>
+
+<div class="box">
+    <h3>Step 1: Upload image and select two points</h3>
+    <input type="file" id="image" accept="image/*">
+    <div id="image_container">
+        <!-- JS inserts <img> here -->
+    </div>
+    <p id="click_info">Click two points on the image to define the segment whose real-world length you want.</p>
+    <p id="selected_points">No points selected yet.</p>
+</div>
+
+<div class="box">
+    <h3>Step 2: Enter known camera-to-object distance</h3>
+    <label for="Z_val">Distance from camera to the object (along optical axis):</label>
+    <input type="number" id="Z_val" step="0.0001" placeholder="Enter distance">
+    <select id="Z_units">
+        <option value="m">meters</option>
+        <option value="cm">centimeters</option>
+    </select>
+</div>
+
+<div class="box">
+    <h3>Step 3: Compute real-world length</h3>
+    <button id="compute_dimension">Compute Real-World Length</button>
+    <p id="status"></p>
+</div>
+
+<div class="box">
+    <h3>Result</h3>
+    <p id="distance_result">No result yet.</p>
+    <div id="overlay_image">No overlay yet.</div>
+</div>
+
+<script>
+(function() {
+    const fileInput = document.getElementById('image');
+    const imageContainer = document.getElementById('image_container');
+    const clickInfo = document.getElementById('click_info');
+    const selectedPointsEl = document.getElementById('selected_points');
+    const computeBtn = document.getElementById('compute_dimension');
+    const statusEl = document.getElementById('status');
+    const resultEl = document.getElementById('distance_result');
+    const overlayImageEl = document.getElementById('overlay_image');
+    const ZInput = document.getElementById('Z_val');
+    const ZUnitsSelect = document.getElementById('Z_units');
+
+    let uploadedFile = null;
+    let imgElement = null;
+    let points = []; // [{u, v} in original image pixel coordinates]
+
+    function resetPoints() {
+        points = [];
+        selectedPointsEl.textContent = 'No points selected yet.';
+        clickInfo.textContent = 'Click two points on the image to define the segment whose real-world length you want.';
+    }
+
+    fileInput.addEventListener('change', function(e) {
+        resetPoints();
+        statusEl.textContent = '';
+        resultEl.textContent = 'No result yet.';
+        overlayImageEl.innerHTML = 'No overlay yet.';
+
+        const file = e.target.files[0];
+        if (!file) {
+            imageContainer.innerHTML = '';
+            uploadedFile = null;
+            return;
+        }
+        uploadedFile = file;
+
+        const reader = new FileReader();
+        reader.onload = function(ev) {
+            imageContainer.innerHTML = '';
+            imgElement = document.createElement('img');
+            imgElement.id = 'uploaded_image';
+            imgElement.src = ev.target.result;
+            imageContainer.appendChild(imgElement);
+
+            imgElement.addEventListener('click', function(event) {
+                if (!imgElement) return;
+
+                const rect = imgElement.getBoundingClientRect();
+                const x = event.clientX - rect.left;
+                const y = event.clientY - rect.top;
+
+                const scaleX = imgElement.naturalWidth / rect.width;
+                const scaleY = imgElement.naturalHeight / rect.height;
+                const u = x * scaleX;
+                const v = y * scaleY;
+
+                if (points.length >= 2) {
+                    points = [];
+                }
+                points.push({u: u, v: v});
+
+                if (points.length === 1) {
+                    selectedPointsEl.textContent =
+                        `First point: (u=${u.toFixed(1)}, v=${v.toFixed(1)})`;
+                    clickInfo.textContent = 'Now click the second point.';
+                } else if (points.length === 2) {
+                    selectedPointsEl.textContent =
+                        `Point 1: (u=${points[0].u.toFixed(1)}, v=${points[0].v.toFixed(1)}), ` +
+                        `Point 2: (u=${points[1].u.toFixed(1)}, v=${points[1].v.toFixed(1)})`;
+                    clickInfo.textContent = 'Two points selected. Click again to reset if needed.';
+                }
+            });
+        };
+        reader.readAsDataURL(file);
+    });
+
+    computeBtn.addEventListener('click', function() {
+        statusEl.textContent = '';
+        resultEl.textContent = '';
+
+        if (!uploadedFile) {
+            statusEl.textContent = 'Error: Please upload an image first.';
+            return;
+        }
+        if (points.length !== 2) {
+            statusEl.textContent = 'Error: Please select exactly two points on the image.';
+            return;
+        }
+
+        const Z_str = ZInput.value;
+        if (!Z_str) {
+            statusEl.textContent = 'Error: Please enter the camera-to-object distance.';
+            return;
+        }
+
+        const Z_val = parseFloat(Z_str);
+        if (!isFinite(Z_val) || Z_val <= 0) {
+            statusEl.textContent = 'Error: Distance must be a positive number.';
+            return;
+        }
+
+        const units = ZUnitsSelect.value; // "m" or "cm"
+
+        const formData = new FormData();
+        formData.append('image', uploadedFile);
+        formData.append('u1', points[0].u);
+        formData.append('v1', points[0].v);
+        formData.append('u2', points[1].u);
+        formData.append('v2', points[1].v);
+        formData.append('Z_val', Z_val);
+        formData.append('Z_units', units);
+        formData.append('axis', 'auto');
+
+        statusEl.textContent = 'Computing real-world length...';
+
+        fetch('/api/hw1_compute_dimensions', {
+            method: 'POST',
+            body: formData
+        })
+        .then(resp => resp.json())
+        .then(data => {
+            if (!data.success) {
+                statusEl.textContent = data.message || 'Error occurred during computation.';
+                resultEl.textContent = 'No valid result.';
+                overlayImageEl.innerHTML = 'No overlay.';
+                return;
+            }
+
+            statusEl.textContent = data.message || 'Computation successful.';
+            const L_real_m = data.L_real_m;
+            const L_real_original_units = data.L_real_in_input_units;
+            const Z_m = data.Z_m;
+            const axis_used = data.axis_used;
+            const d_pix = data.d_pix;
+
+            resultEl.textContent =
+                `Estimated real-world length: ${L_real_m.toFixed(4)} meters ` +
+                `(≈ ${L_real_original_units.toFixed(4)} in your input units, ` +
+                `Z = ${Z_m.toFixed(4)} m, axis: ${axis_used}, image segment: ${d_pix.toFixed(2)} px).`;
+
+            if (data.overlay_image_url) {
+                const img = document.createElement('img');
+                img.src = data.overlay_image_url + '?t=' + Date.now();
+                img.alt = 'Overlay with selected segment';
+                overlayImageEl.innerHTML = '';
+                overlayImageEl.appendChild(img);
+            } else {
+                overlayImageEl.innerHTML = 'No overlay image returned.';
+            }
+        })
+        .catch(err => {
+            console.error(err);
+            statusEl.textContent = 'Request failed.';
+            resultEl.textContent = 'No valid result.';
+            overlayImageEl.innerHTML = 'No overlay.';
+        });
+    });
+})();
+</script>
+
+</body>
+</html>
